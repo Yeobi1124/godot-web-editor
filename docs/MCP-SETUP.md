@@ -199,8 +199,10 @@ sudo systemctl restart godot-mcp-relay
 
 Claude에게 "서버 꺼 줘"라고 하면 `stop_server` 도구로 바로 끌 수도 있습니다. 끈 뒤에는 Claude가 다시 켤 수 없으니 아래 워크플로로 켜세요.
 
-### GitHub Actions 워크플로 (게임 저장소 `godot-test`)
-`.github/workflows/server-power.yml` — 저장소(또는 GitHub 모바일 앱) → **Actions → 서버 전원 → Run workflow**
+Paperspace API 키는 콘솔의 **Team settings → API Keys**에서 만들고, 표시되는 값을 **전부** 복사하세요(앞뒤 공백 없이).
+
+### GitHub Actions 워크플로 (비공개 저장소 `godot-mcp-automation`)
+`.github/workflows/server-power.yml` — 그 저장소(또는 GitHub 모바일 앱) → **Actions → 서버 전원 → Run workflow**
 
 | 할 일 | 동작 |
 |---|---|
