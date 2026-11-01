@@ -13,7 +13,7 @@
 //  GODOT_GITHUB_TOKEN         웹 에디터가 쓸 GitHub 토큰          (또는 HEADLESS_GITHUB_TOKEN)
 //  PUBLIC_URL, PAIRING_TOKEN, CLI_TOKEN, PORT   중계 서버 설정 그대로 사용
 //  HEADLESS_RELAY_URL         에디터가 접속할 중계 서버 주소 (기본 http://127.0.0.1:<PORT>, 같은 컴퓨터)
-//  HEADLESS_EDITOR_URL        기본 https://yeobi1124.github.io/godot-web-editor/
+//  HEADLESS_EDITOR_URL        기본 http://127.0.0.1:<PORT>/app/ (중계 서버가 GitHub Pages의 페이지를 전달)
 //  HEADLESS_YIELD_TO_BROWSER  1(기본)이면 PC 에디터가 연결될 때 멈춤, 0이면 멈추지 않음
 //  HEADLESS_RESUME_AFTER_SEC  PC 에디터가 사라진 뒤 다시 켜기까지 기다리는 시간 (기본 60)
 //  HEADLESS_CHECK_SEC         상태 확인 주기 (기본 15)
@@ -41,7 +41,9 @@ if (!project) fail('DEFAULT_PROJECT(또는 HEADLESS_PROJECT)를 "소유자/저�
 if (!githubToken) fail('GODOT_GITHUB_TOKEN(또는 HEADLESS_GITHUB_TOKEN)을 설정하세요.');
 for (const k of ['PUBLIC_URL', 'PAIRING_TOKEN', 'CLI_TOKEN']) if (!env[k]) fail(`${k}가 없습니다. 'npm run init'을 먼저 실행하세요.`);
 
-const EDITOR_URL = env.HEADLESS_EDITOR_URL || 'https://yeobi1124.github.io/godot-web-editor/';
+// 기본: 중계 서버가 전달하는 페이지(http://127.0.0.1:<PORT>/app/)를 연다. 페이지와 WebSocket이 같은 출처가 되어
+// 공개 주소를 돌아 나가거나 브라우저의 로컬 네트워크 접근 차단에 걸리지 않는다.
+const EDITOR_URL = env.HEADLESS_EDITOR_URL || `http://127.0.0.1:${env.PORT || 8787}/app/`;
 // 서버 안의 에디터는 공개 주소(Funnel)를 돌아 나가지 않고 같은 컴퓨터의 중계 서버로 바로 접속한다
 const RELAY_FOR_PAGE = (env.HEADLESS_RELAY_URL || `http://127.0.0.1:${env.PORT || 8787}`).replace(/\/$/, '');
 const RELAY_LOCAL = `http://127.0.0.1:${env.PORT || 8787}`;

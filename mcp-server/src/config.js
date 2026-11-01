@@ -60,6 +60,8 @@ export function readConfig(env = process.env) {
     githubApiBase: env.GITHUB_API_BASE || 'https://api.github.com',
     dataDir: resolve(ROOT, env.DATA_DIR || 'data'),
     extraRedirectUris: (env.EXTRA_REDIRECT_URIS || '').split(',').map((s) => s.trim()).filter(Boolean),
+    // 서버의 헤드리스 에디터용: 이 주소의 웹 에디터 페이지를 /app/ 아래로 전달한다 ('off'면 사용 안 함)
+    editorPageUrl: env.EDITOR_PAGE_URL === 'off' ? null : (env.EDITOR_PAGE_URL || 'https://yeobi1124.github.io/godot-web-editor/').replace(/\/?$/, '/'),
   };
   for (const k of ['adminPassword', 'cliToken', 'pairingToken']) {
     if (config[k].length < 12) throw new Error(`${k}가 너무 짧습니다 (12자 이상)`);

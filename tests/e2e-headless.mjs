@@ -69,6 +69,7 @@ const relay = createRelay({
   githubApiBase: `http://localhost:${GH_PORT}`,
   dataDir: join(DATA, 'relay'),
   extraRedirectUris: [],
+  editorPageUrl: `http://localhost:${WEB_PORT}/`,
 });
 await relay.listen(RELAY_PORT, '127.0.0.1');
 const web = spawn(process.execPath, [join(ROOT, 'tools/serve.mjs'), String(WEB_PORT), join(ROOT, 'dist')], { stdio: 'ignore' });
@@ -84,7 +85,8 @@ const runner = spawn(process.execPath, [join(ROOT, 'mcp-server/headless/runner.m
     PAIRING_TOKEN: PAIRING,
     DEFAULT_PROJECT: 'tester/game@main',
     GODOT_GITHUB_TOKEN: 'test-token',
-    HEADLESS_EDITOR_URL: `http://localhost:${WEB_PORT}/?api=http://localhost:${GH_PORT}&autosave=3&poll=3&status=2`,
+    // 실제 서버와 같은 경로: 중계 서버가 전달하는 /app/ 페이지 (localhost라 테스트용 api 옵션 허용)
+    HEADLESS_EDITOR_URL: `http://127.0.0.1:${RELAY_PORT}/app/?api=http://localhost:${GH_PORT}&autosave=3&poll=3&status=2`,
     HEADLESS_CHECK_SEC: '2',
     HEADLESS_RESUME_AFTER_SEC: '4',
     DATA_DIR: join(DATA, 'runner'),
