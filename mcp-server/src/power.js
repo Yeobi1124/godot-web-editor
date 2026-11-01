@@ -3,7 +3,7 @@
 // "사용"으로 보는 것
 //  - MCP 도구 호출 (전원 상태 조회는 제외)
 //  - 사람이 쓰는 브라우저(PC)의 웹 에디터가 연결되어 있는 동안
-//  - SSH 등으로 로그인한 사용자가 있는 동안 (`who`)
+//  - SSH 등 로그인 세션에서 최근 2분 안에 입력이 있었을 때 (`who -u`, 로그인만 되어 있고 입력이 없으면 제외)
 // 서버 안의 헤드리스 에디터는 항상 켜져 있으므로 사용으로 치지 않는다.
 //
 // 설정은 data/power.json에 저장되어 재시작 후에도 유지된다.
@@ -15,10 +15,31 @@ import { join } from 'node:path';
 export const MIN_IDLE_MINUTES = 1;
 export const MAX_IDLE_MINUTES = 7 * 24 * 60;
 
-/** 로그인한 사용자 수 (who 명령 결과 줄 수). 실패하면 0 */
-export function countLoginSessions() {
+/**
+ * `who -u` 출력에서 최근(약 2분 안)에 입력이 있었던 로그인 세션 수를 센다.
+ * 로그인만 되어 있고 입력이 없는 세션(끊겼지만 서버에 남은 SSH, 항상 로그인된 데스크톱 등)은 세지 않는다.
+ * IDLE 열: "."(1분 안에 입력) | "HH:MM"(유휴 시간) | "old"(24시간 이상) | "?"(알 수 없음)
+ */
+export function parseActiveSessions(whoOutput, maxIdleMinutes = 2) {
+  let active = 0;
+  for (const line of whoOutput.split('\n')) {
+    const f = line.trim().split(/\s+/);
+    if (f.length < 5) continue;
+    // NAME LINE YYYY-MM-DD HH:MM IDLE [PID] [COMMENT]
+    const idle = f[4];
+    if (idle === '.') active++;
+    else if (/^\d{1,2}:\d{2}$/.test(idle)) {
+      const [h, m] = idle.split(':').map(Number);
+      if (h * 60 + m < maxIdleMinutes) active++;
+    }
+  }
+  return active;
+}
+
+/** 최근 입력이 있는 로그인 세션 수. 실패하면 0 */
+export function countActiveSessions() {
   return new Promise((resolve) => {
-    execFile('who', { timeout: 5000 }, (err, stdout) => resolve(err ? 0 : stdout.split('\n').filter((l) => l.trim()).length));
+    execFile('who', ['-u'], { timeout: 5000 }, (err, stdout) => resolve(err ? 0 : parseActiveSessions(stdout)));
   });
 }
 
@@ -26,7 +47,7 @@ export class PowerManager {
   #timer = null;
   stopping = false;
 
-  constructor({ dataDir, paperspace = null, link, defaults = {}, now = () => Date.now(), loginSessions = countLoginSessions, log = console.log }) {
+  constructor({ dataDir, paperspace = null, link, defaults = {}, now = () => Date.now(), loginSessions = countActiveSessions, log = console.log }) {
     this.path = join(dataDir, 'power.json');
     mkdirSync(dataDir, { recursive: true, mode: 0o700 });
     this.paperspace = paperspace;
@@ -66,7 +87,7 @@ export class PowerManager {
     const browserTabs = this.link.summary().filter((t) => t.kind === 'browser');
     if (browserTabs.length) reasons.push(`PC 웹 에디터 연결 ${browserTabs.length}개`);
     const sessions = await this.loginSessions();
-    if (sessions > 0) reasons.push(`로그인 세션 ${sessions}개(SSH 등)`);
+    if (sessions > 0) reasons.push(`SSH 등에서 입력 중인 세션 ${sessions}개`);
     return reasons;
   }
 
