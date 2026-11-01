@@ -7,6 +7,7 @@
 //   /healthz                   상태 확인 (비밀 정보 없음)
 //   /app/                      웹 에디터 페이지 전달 (서버의 헤드리스 에디터가 같은 출처로 열기 위함)
 
+import { execFileSync } from 'node:child_process';
 import { createServer } from 'node:http';
 import { Readable } from 'node:stream';
 import { readFileSync } from 'node:fs';
@@ -26,6 +27,24 @@ import { PowerManager } from './power.js';
 import { ToolRouter } from './tools.js';
 
 const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
+
+/** 실행 중인 코드의 커밋 (자동 업데이트 확인용) */
+function gitCommit() {
+  try {
+    return execFileSync('git', ['rev-parse', '--short', 'HEAD'], { cwd: ROOT, encoding: 'utf8', timeout: 5000 }).trim();
+  } catch {
+    return null;
+  }
+}
+
+/** 마지막 자동 업데이트 결과 (deploy/update.sh가 기록) */
+function readUpdateState(dataDir) {
+  try {
+    return JSON.parse(readFileSync(join(dataDir, 'update-state.json'), 'utf8'));
+  } catch {
+    return null;
+  }
+}
 
 /**
  * 웹 에디터 페이지를 /app/ 아래로 그대로 전달한다 (서버 안의 헤드리스 에디터용).
@@ -106,8 +125,18 @@ export function createRelay(config) {
 
   if (config.editorPageUrl) app.use('/app', editorPageProxy(config.editorPageUrl));
 
+  const commit = gitCommit();
+  const lastUpdate = readUpdateState(config.dataDir);
   app.get('/healthz', (_req, res) => {
-    res.json({ ok: true, version: VERSION, editor_tabs: link.tabs.size, github_fallback: !!github, default_project: config.defaultProject?.key ?? null });
+    res.json({
+      ok: true,
+      version: VERSION,
+      commit,
+      last_update: lastUpdate,
+      editor_tabs: link.tabs.size,
+      github_fallback: !!github,
+      default_project: config.defaultProject?.key ?? null,
+    });
   });
   app.get('/', (_req, res) => {
     res.type('text').send(`godot-mcp-relay ${VERSION}\nMCP endpoint: ${mcpUrl.href}\n연결된 에디터 탭: ${link.tabs.size}\n`);
@@ -157,6 +186,7 @@ export function createRelay(config) {
     provider,
     router,
     power,
+    commit,
     listen: (port = config.port, host = config.host) => new Promise((resolve) => server.listen(port, host, () => resolve(server.address()))),
     close: () =>
       new Promise((resolve) => {
@@ -171,9 +201,11 @@ export function createRelay(config) {
 async function main() {
   loadDotEnv();
   const config = readConfig();
+  // 자동 업데이트의 임시 확인 실행이면 전원 관리 타이머를 돌리지 않는다
+  if (process.env.UPDATE_VERIFY) config.powerCheckMs = 3600000;
   const relay = createRelay(config);
   const addr = await relay.listen();
-  log(`godot-mcp-relay ${VERSION} 시작: http://${addr.address}:${addr.port}`);
+  log(`godot-mcp-relay ${VERSION} (${relay.commit ?? "커밋 정보 없음"}) 시작: http://${addr.address}:${addr.port}`);
   log(`공개 주소: ${config.publicUrl}  (MCP: ${config.publicUrl}/mcp)`);
   log(`에디터 페이지 허용 Origin: ${config.allowedOrigins.join(', ')}`);
   if (config.editorPageUrl) log(`웹 에디터 페이지 전달: /app/ -> ${config.editorPageUrl}`);
