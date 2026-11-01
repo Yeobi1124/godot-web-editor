@@ -10,6 +10,7 @@ import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StreamableHTTPClientTransport } from '@modelcontextprotocol/sdk/client/streamableHttp.js';
 import { createRelay } from '../src/server.js';
 import { PaperspaceClient } from '../src/paperspace.js';
+import { parseActiveSessions } from '../src/power.js';
 
 const CLI = 'cli-token-power-test-0123';
 const PAIR = 'pairing-power-test-0123';
@@ -141,6 +142,21 @@ describe('PaperspaceClient', () => {
   });
 });
 
+describe('로그인 세션 판단 (who -u)', () => {
+  test('최근 입력이 있는 세션만 사용 중으로 셈', () => {
+    const out = [
+      'paperspace pts/0        2026-11-01 10:59   .          4321 (203.0.113.5)', // 방금 입력
+      'paperspace pts/1        2026-11-01 09:10 00:01        4400 (203.0.113.5)', // 1분 유휴
+      'paperspace pts/2        2026-11-01 08:00 00:45        4500 (198.51.100.7)', // 끊겼지만 남은 SSH
+      'paperspace tty7         2026-11-01 07:00  old         1200 (:0)', // 데스크톱 로그인
+      'paperspace :0           2026-11-01 07:00   ?          1200 (:0)',
+    ].join('\n');
+    assert.equal(parseActiveSessions(out), 2);
+    assert.equal(parseActiveSessions(''), 0);
+    assert.equal(parseActiveSessions('paperspace pts/3 2026-11-01 10:00 02:30 99 (x)'), 0);
+  });
+});
+
 describe('자동 종료', () => {
   test('기본은 꺼짐: 오래 사용이 없어도 끄지 않음', async () => {
     await startRelay();
@@ -175,8 +191,8 @@ describe('자동 종료', () => {
     // 상태 조회는 사용으로 치지 않음
     clock += 10 * 60_000;
     await client.callTool({ name: 'get_server_power', arguments: {} });
-    sessions = 1; // SSH 로그인 중
-    assert.equal(await relay.power.check(), null, 'SSH 로그인 중에는 끄지 않음');
+    sessions = 1; // SSH에서 입력 중
+    assert.equal(await relay.power.check(), null, 'SSH에서 입력 중이면 끄지 않음');
     sessions = 0;
     const pc = await tab('browser'); // PC 에디터 연결
     clock += 60 * 60_000;
