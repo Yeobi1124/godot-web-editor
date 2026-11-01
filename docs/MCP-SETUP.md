@@ -219,6 +219,23 @@ Paperspace API 키는 콘솔의 **Team settings → API Keys**에서 만들고, 
 | `PAPERSPACE_MACHINE_ID` | 기계 ID |
 | `RELAY_CLI_TOKEN` | 중계 서버 `.env`의 `CLI_TOKEN` 값 (자동 종료 설정, 끄기 전 저장에 필요) |
 
+## 10. 자동 업데이트 (부팅할 때)
+
+서버가 켜질 때 중계 서버와 헤드리스 에디터보다 먼저 `godot-web-editor`의 최신 `main`을 받습니다. PR을 머지한 뒤 서버를 껐다 켜면 적용됩니다.
+
+```bash
+~/godot-web-editor/mcp-server/deploy/install-update-service.sh
+```
+
+동작 (`mcp-server/deploy/update.sh`)
+- 새 커밋이 있으면 **빨리 감기로만** 받습니다. 서버에서 직접 고친 파일이 있거나 `main`이 아니면 건너뜁니다.
+- `package-lock.json`이 바뀐 폴더만 `npm ci` (헤드리스 쪽은 Chromium도 확인)
+- 새 버전의 중계 서버를 임시 포트로 띄워 정상인지 확인하고, **실패하면 이전 버전으로 되돌립니다.**
+- 인터넷 연결 등으로 업데이트하지 못해도 기존 버전으로 정상 시작합니다.
+- 결과는 `journalctl -u godot-update`, `/healthz`(`commit`, `last_update`), 워크플로 `start`/`status` 결과에 표시됩니다.
+
+지금 바로 업데이트: `sudo systemctl start godot-update && sudo systemctl restart godot-mcp-relay godot-headless-editor`
+
 ## 보안 메모
 
 - 서버는 `127.0.0.1`에서만 열리고, 외부 접속은 Tailscale Funnel을 통해서만 들어옵니다.
