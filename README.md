@@ -36,7 +36,7 @@ Claude 같은 AI가 프로젝트를 읽고 고칠 수 있도록 도구 API도 �
 | **Claude in Chrome 등 브라우저 AI** | 페이지가 `window.godotAI` API를 제공합니다. **AI 패널 → AI 연결** 탭의 안내문을 복사해 AI에게 주세요. |
 | **JS 실행 없이 클릭만 하는 AI** | **AI 패널 → 파일** 탭(경로·내용 입력란, 파일 저장 버튼)을 쓰면 됩니다. |
 | **WebMCP** | 브라우저가 `navigator.modelContext`를 지원하면 같은 도구를 자동으로 등록합니다. (실험적 표준) |
-| **MCP 서버** | 예정. 같은 도구 정의를 그대로 씁니다. [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md) 참고 |
+| **MCP 서버** (claude.ai·모바일·Claude Code) | 내 Ubuntu 컴퓨터에 `mcp-server/`를 설치하고 에디터 설정에서 연결합니다. 에디터를 닫아 두어도 파일 작업은 GitHub로 처리됩니다. [설치 안내](docs/MCP-SETUP.md) · [설계](docs/MCP.md) |
 
 ```js
 godotAI.help()                                   // 사용법
@@ -66,6 +66,8 @@ await godotAI.run(); await godotAI.logs({ level: 'error' }); await godotAI.stop(
 scripts/build.sh               # 공식 Godot 웹 에디터(체크섬 고정)를 받아 web/과 합쳐 dist/ 생성
 node tools/serve.mjs 8060 dist # COOP/COEP 헤더를 붙여 로컬 서빙 → http://localhost:8060
 node tests/e2e.mjs             # 가짜 GitHub API + 헤드리스 Chromium으로 전체 흐름 검증 (playwright 필요)
+(cd mcp-server && npm ci && npm test)   # MCP 중계 서버 통합 테스트
+node tests/e2e-mcp.mjs         # MCP 클라이언트 -> 중계 서버 -> 실제 웹 에디터 E2E
 ```
 
 `main` 브랜치에 푸시하면 GitHub Actions가 빌드해서 GitHub Pages에 배포합니다

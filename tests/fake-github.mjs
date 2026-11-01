@@ -133,7 +133,7 @@ export class FakeGitHub {
     if ((m = p.match(/^\/git\/trees\/(\w+)$/)) && req.method === 'GET') {
       const t = this.trees.get(m[1]);
       if (!t) return send(404, { message: 'Not Found' });
-      return send(200, { sha: m[1], truncated: false, tree: Object.entries(t).map(([path, sha]) => ({ path, mode: '100644', type: 'blob', sha })) });
+      return send(200, { sha: m[1], truncated: false, tree: Object.entries(t).map(([path, sha]) => ({ path, mode: '100644', type: 'blob', sha, size: this.blobs.get(sha)?.length ?? 0 })) });
     }
     if (p === '/git/trees' && req.method === 'POST') {
       const base = body.base_tree ? { ...(this.trees.get(body.base_tree) ?? {}) } : {};

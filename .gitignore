@@ -2,3 +2,5 @@ dist/
 .cache/
 node_modules/
 test-results/
+mcp-server/.env
+mcp-server/data/

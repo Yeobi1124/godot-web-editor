@@ -2,6 +2,7 @@
 
 const SETTINGS_KEY = 'gwe:settings';
 const TOKEN_KEY = 'gwe:token';
+const MCP_KEY = 'gwe:mcp';
 
 export function loadSettings() {
   try {
@@ -47,4 +48,18 @@ export function devOptions() {
 export function projectDirFor(owner, repo, branch) {
   const clean = (s) => String(s).replace(/[^\w.-]/g, '_');
   return `/home/web_user/projects/${clean(owner)}__${clean(repo)}__${clean(branch)}`;
+}
+
+/** MCP 중계 서버 연결 설정 { url, token } (이 브라우저에만 저장) */
+export function loadMcpSettings() {
+  try {
+    return JSON.parse(localStorage.getItem(MCP_KEY)) ?? {};
+  } catch {
+    return {};
+  }
+}
+
+export function saveMcpSettings({ url, token }) {
+  if (url && token) localStorage.setItem(MCP_KEY, JSON.stringify({ url, token }));
+  else localStorage.removeItem(MCP_KEY);
 }

@@ -15,6 +15,7 @@
     <span id="repo-label" class="repo">-</span>
     <span id="sync-pill" class="pill" data-state="busy" role="status" aria-live="polite">시작 중…</span>
     <span id="bridge-dot" class="dot" data-ready="false" aria-hidden="true"></span>
+    <span id="mcp-badge" class="badge" data-state="off" hidden>MCP</span>
     <span class="spacer"></span>
     <button id="btn-save" type="button" title="열린 씬을 저장하고 즉시 GitHub에 커밋">지금 저장</button>
     <button id="btn-pull" type="button" title="GitHub의 새 커밋을 바로 받기">원격 확인</button>
@@ -90,6 +91,9 @@
 4. 변경은 자동으로 GitHub에 커밋되니 별도로 저장할 필요는 없어.
 JavaScript를 실행할 수 없다면 오른쪽 "AI 패널"의 파일 탭(경로, 내용 입력란, 파일 저장 버튼)을 사용해.</pre>
         <button id="ai-copy-prompt" type="button">안내문 복사</button>
+        <h3>MCP로 받은 최근 호출</h3>
+        <p class="muted">설정에서 MCP 서버에 연결하면, Claude 앱이 실행한 도구가 여기에 표시됩니다.</p>
+        <ul id="mcp-calls" class="tool-list" aria-live="polite"></ul>
         <h3>사용 가능한 도구</h3>
         <ul id="ai-tools-list" class="tool-list"></ul>
       </section>
@@ -123,6 +127,20 @@ JavaScript를 실행할 수 없다면 오른쪽 "AI 패널"의 파일 탭(경로
 
   <dialog id="settings" aria-labelledby="settings-title">
     <h2 id="settings-title">설정</h2>
+    <section class="stack" aria-labelledby="mcp-title">
+      <h3 id="mcp-title">MCP 서버 (Claude 앱 연결)</h3>
+      <p class="muted">godot-mcp-relay 서버에 연결하면 Claude 앱과 Claude Code가 이 에디터를 사용할 수 있습니다. 값은 이 브라우저에만 저장됩니다.</p>
+      <label for="mcp-url">서버 주소</label>
+      <input id="mcp-url" type="text" placeholder="https://내컴퓨터.tailxxxx.ts.net" autocomplete="off" spellcheck="false">
+      <label for="mcp-token">페어링 토큰</label>
+      <input id="mcp-token" type="password" autocomplete="off" spellcheck="false">
+      <p id="mcp-status" class="muted" role="status">연결 안 함</p>
+      <div class="row">
+        <button id="mcp-save" type="button" class="primary">저장하고 연결</button>
+        <button id="mcp-clear" type="button">연결 해제</button>
+      </div>
+    </section>
+    <hr>
     <div class="stack">
       <button id="btn-change-repo" type="button">다른 저장소 연결</button>
       <button id="btn-logout" type="button">로그아웃 (이 브라우저에서 토큰 삭제)</button>

@@ -12,9 +12,10 @@ import { GitHubClient, GitHubError } from './github.js';
 import { GodotHost } from './godot-host.js';
 import * as idb from './idbfs.js';
 import { LogBuffer } from './logs.js';
+import { McpLink } from './mcp-link.js';
 import { ProjectAPI } from './project-api.js';
 import { loadBundledBridge, planScaffold } from './scaffold.js';
-import { clearToken, devOptions, loadSettings, loadToken, projectDirFor, saveSettings, saveToken } from './settings.js';
+import { clearToken, devOptions, loadMcpSettings, loadSettings, loadToken, projectDirFor, saveMcpSettings, saveSettings, saveToken } from './settings.js';
 import { SyncEngine } from './sync.js';
 import { askSettings, renderStatus, setLoading, showFatal, toast } from './ui.js';
 
@@ -124,6 +125,59 @@ function bindToolbar({ api, sync, panel }) {
   $('#settings-close').addEventListener('click', () => $('#settings').close());
 }
 
+/** MCP 중계 서버 연결과 설정 화면 */
+function setupMcp({ api, sync, bridge, info }) {
+  const mcp = new McpLink({ api, sync, bridge, logs, info });
+  const badge = $('#mcp-badge');
+  const LABEL = { off: '연결 안 함', connecting: '연결 중…', connected: '연결됨', rejected: '연결 실패' };
+  const render = () => {
+    badge.hidden = mcp.status === 'off';
+    badge.dataset.state = mcp.status;
+    badge.title = `MCP 서버: ${LABEL[mcp.status]}${mcp.detail ? ` — ${mcp.detail}` : ''}`;
+    $('#mcp-status').textContent = `상태: ${LABEL[mcp.status]}${mcp.detail && mcp.detail !== LABEL[mcp.status] ? ` — ${mcp.detail}` : ''}`;
+  };
+  const renderCalls = () => {
+    $('#mcp-calls').replaceChildren(
+      ...mcp.recent.map((c) => {
+        const li = document.createElement('li');
+        li.className = c.ok ? '' : 'err';
+        li.textContent = `${new Date(c.time).toLocaleTimeString()} ${c.name} (${c.ms}ms)${c.ok ? '' : ` — ${c.error.slice(0, 120)}`}`;
+        return li;
+      }),
+    );
+  };
+  mcp.addEventListener('status', render);
+  mcp.addEventListener('call', renderCalls);
+  const saved = loadMcpSettings();
+  $('#mcp-url').value = saved.url ?? '';
+  $('#mcp-save').addEventListener('click', () => {
+    const url = $('#mcp-url').value.trim();
+    const token = $('#mcp-token').value.trim() || loadMcpSettings().token;
+    if (!url || !token) {
+      toast('서버 주소와 페어링 토큰을 입력하세요', 'error');
+      return;
+    }
+    try {
+      new URL(url);
+    } catch {
+      toast('서버 주소 형식이 잘못되었습니다. 예: https://my-pc.tail1234.ts.net', 'error');
+      return;
+    }
+    saveMcpSettings({ url, token });
+    $('#mcp-token').value = '';
+    mcp.configure({ url, token });
+  });
+  $('#mcp-clear').addEventListener('click', () => {
+    saveMcpSettings({});
+    $('#mcp-url').value = '';
+    $('#mcp-token').value = '';
+    mcp.configure({});
+  });
+  mcp.configure(saved);
+  render();
+  return mcp;
+}
+
 async function main() {
   const missing = GodotHost.missingFeatures();
   if (missing.length) {
@@ -192,6 +246,7 @@ async function main() {
   registerWebMCP(api, logs);
   const panel = new AIPanel({ root: $('#ai-panel'), api, logs, toast });
   bindToolbar({ api, sync, panel });
+  app.mcp = setupMcp({ api, sync, bridge, info: api.info });
 
   sync.start({ autosaveSec: dev.autosaveSec ?? 30, pollSec: dev.pollSec ?? 30, statusSec: dev.statusSec ?? 10 });
   window.addEventListener('beforeunload', (e) => {

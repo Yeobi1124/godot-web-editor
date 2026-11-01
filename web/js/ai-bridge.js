@@ -2,13 +2,9 @@
 //  1) window.godotAI : 페이지에서 JS를 실행할 수 있는 에이전트(Claude in Chrome, DevTools MCP, Playwright 등)용
 //  2) WebMCP        : 브라우저가 navigator.modelContext(또는 document.modelContext)를 지원하면 도구를 등록
 
-/** 도구 결과를 MCP content 블록으로 변환 (WebMCP와 이후 MCP 중계 서버가 함께 사용) */
-export function toMcpContent(result) {
-  if (result && result.type === 'image' && result.data) {
-    return { content: [{ type: 'image', data: result.data, mimeType: result.mimeType || 'image/png' }] };
-  }
-  return { content: [{ type: 'text', text: JSON.stringify(result ?? null, null, 2) }] };
-}
+import { toMcpContent } from './tool-defs.js';
+
+export { toMcpContent };
 
 const HELP = `godotAI: 이 페이지의 Godot 웹 에디터 프로젝트를 다루는 API입니다. 모든 메서드는 Promise를 돌려줍니다.
 변경 사항은 에디터에 바로 반영되고, 잠시 뒤 GitHub 저장소에 자동으로 커밋됩니다.
