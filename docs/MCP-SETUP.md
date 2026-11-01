@@ -129,6 +129,8 @@ claude mcp add --transport http godot https://<PUBLIC_URL의 호스트>/mcp --he
 - **PC에서 웹 에디터를 열면** 서버 쪽 에디터가 변경을 GitHub에 저장하고 **스스로 멈춥니다** (두 에디터가 같은 프로젝트를 동시에 고치지 않도록).
 - **PC 에디터를 닫으면** 1분 뒤 서버 쪽 에디터가 GitHub에서 최신 상태를 받아 다시 시작합니다.
 - CPU로 화면을 그리므로 메모리를 1~2GB 정도 씁니다.
+- 서버 안의 에디터는 중계 서버가 전달하는 페이지(`http://127.0.0.1:8787/app/`)로 열립니다. 페이지와 MCP 연결이 같은 컴퓨터 안에서 이루어지므로
+  공개 주소(Funnel)를 거치지 않고, 브라우저의 로컬 네트워크 접근 차단에도 걸리지 않습니다.
 
 필요한 설정: 4단계의 `DEFAULT_PROJECT`(예: `Yeobi1124/godot-test@main`)와 `GODOT_GITHUB_TOKEN`. 비어 있으면 `npm run init`을 다시 실행해 입력하세요.
 
@@ -160,6 +162,9 @@ journalctl -u godot-headless-editor -f
 | 업데이트 후 | `cd ~/godot-web-editor/mcp-server/headless && npm ci && sudo systemctl restart godot-headless-editor` |
 | PC 에디터에 양보하지 않기 | `.env`에 `HEADLESS_YIELD_TO_BROWSER=0` (권장하지 않음) |
 | 다시 켜기까지 대기 시간 | `.env`에 `HEADLESS_RESUME_AFTER_SEC=60` |
+
+로그에 "MCP 중계 서버에 연결되지 않습니다"가 계속 나오면 `.env`에서 `HEADLESS_EDITOR_URL`, `HEADLESS_RELAY_URL` 줄을 지우고(기본값 사용)
+두 서비스를 재시작하세요: `sudo systemctl restart godot-mcp-relay godot-headless-editor`
 
 ## 보안 메모
 

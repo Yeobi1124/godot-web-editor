@@ -5,8 +5,10 @@
 //   /login                     OAuth 로그인 화면 제출
 //   /editor                    웹 에디터 탭 WebSocket
 //   /healthz                   상태 확인 (비밀 정보 없음)
+//   /app/                      웹 에디터 페이지 전달 (서버의 헤드리스 에디터가 같은 출처로 열기 위함)
 
 import { createServer } from 'node:http';
+import { Readable } from 'node:stream';
 import { readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -17,11 +19,57 @@ import { SCOPE, SingleUserOAuthProvider } from './auth.js';
 import { loadDotEnv, readConfig, ROOT } from './config.js';
 import { EditorLink } from './editor-link.js';
 import { GitHubBackend } from './github-backend.js';
-import { log } from './log.js';
+import { log, warn } from './log.js';
 import { mcpHandler } from './mcp.js';
 import { ToolRouter } from './tools.js';
 
 const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
+
+/**
+ * 웹 에디터 페이지를 /app/ 아래로 그대로 전달한다 (서버 안의 헤드리스 에디터용).
+ * 페이지와 /editor WebSocket이 같은 출처(127.0.0.1)가 되므로, 공개 주소(Funnel)를 돌아 나가거나
+ * 브라우저의 로컬 네트워크 접근 차단에 걸리지 않는다. 페이지는 공개 정적 파일이라 비밀 정보가 없다.
+ */
+function editorPageProxy(baseUrl) {
+  const base = new URL(baseUrl);
+  const PASS_HEADERS = ['content-type', 'last-modified', 'etag'];
+  return async (req, res) => {
+    if (req.method !== 'GET' && req.method !== 'HEAD') {
+      res.status(405).end();
+      return;
+    }
+    if (req.originalUrl.split('?')[0] === '/app') {
+      res.redirect(301, '/app/');
+      return;
+    }
+    const rel = decodeURIComponent(req.path).replace(/^\/+/, '');
+    if (rel.split('/').includes('..')) {
+      res.status(400).end();
+      return;
+    }
+    try {
+      const upstream = await fetch(new URL(rel, base), { method: req.method });
+      res.status(upstream.status);
+      for (const h of PASS_HEADERS) {
+        const v = upstream.headers.get(h);
+        if (v) res.set(h, v);
+      }
+      res.set({
+        'Cross-Origin-Opener-Policy': 'same-origin',
+        'Cross-Origin-Embedder-Policy': 'require-corp',
+        'Cache-Control': 'no-cache',
+      });
+      if (req.method === 'HEAD' || !upstream.body) {
+        res.end();
+        return;
+      }
+      Readable.fromWeb(upstream.body).on('error', () => res.destroy()).pipe(res);
+    } catch (e) {
+      warn(`에디터 페이지를 가져오지 못했습니다 (${rel || 'index'}): ${e.message}`);
+      if (!res.headersSent) res.status(502).type('text').send('editor page unavailable');
+    }
+  };
+}
 
 export function createRelay(config) {
   const publicUrl = new URL(config.publicUrl);
@@ -41,6 +89,8 @@ export function createRelay(config) {
   app.disable('x-powered-by');
   // Tailscale Funnel / Cloudflare Tunnel은 같은 컴퓨터(loopback)에서 프록시한다
   app.set('trust proxy', 'loopback');
+
+  if (config.editorPageUrl) app.use('/app', editorPageProxy(config.editorPageUrl));
 
   app.get('/healthz', (_req, res) => {
     res.json({ ok: true, version: VERSION, editor_tabs: link.tabs.size, github_fallback: !!github, default_project: config.defaultProject?.key ?? null });
@@ -96,6 +146,7 @@ async function main() {
   log(`godot-mcp-relay ${VERSION} 시작: http://${addr.address}:${addr.port}`);
   log(`공개 주소: ${config.publicUrl}  (MCP: ${config.publicUrl}/mcp)`);
   log(`에디터 페이지 허용 Origin: ${config.allowedOrigins.join(', ')}`);
+  if (config.editorPageUrl) log(`웹 에디터 페이지 전달: /app/ -> ${config.editorPageUrl}`);
   log(config.githubToken ? `GitHub 대체 처리: 사용 (기본 프로젝트 ${config.defaultProject?.key ?? '없음'})` : 'GitHub 대체 처리: 사용 안 함');
   const stop = async () => {
     log('종료 중...');
