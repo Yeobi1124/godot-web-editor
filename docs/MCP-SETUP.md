@@ -166,6 +166,59 @@ journalctl -u godot-headless-editor -f
 로그에 "MCP 중계 서버에 연결되지 않습니다"가 계속 나오면 `.env`에서 `HEADLESS_EDITOR_URL`, `HEADLESS_RELAY_URL` 줄을 지우고(기본값 사용)
 두 서비스를 재시작하세요: `sudo systemctl restart godot-mcp-relay godot-headless-editor`
 
+## 9. (선택) 서버 전원: GitHub Actions로 켜기/끄기, 사용 없을 때 자동 종료
+
+Paperspace 기계를 쓸 때만 켜 두어 비용을 줄입니다.
+
+### 서버 쪽 설정
+`.env`에 Paperspace API 키를 넣습니다(`npm run init`을 다시 실행해도 됩니다). 기계 ID를 비워 두면 Paperspace 기계의 호스트 이름(`ps...`)을 씁니다.
+
+```bash
+nano ~/godot-web-editor/mcp-server/.env
+```
+
+```
+PAPERSPACE_API_KEY=<Paperspace API 키>
+PAPERSPACE_MACHINE_ID=<기계 ID, 예: psl1hbkqfu1u>
+```
+
+```bash
+sudo systemctl restart godot-mcp-relay
+```
+
+로그에 `서버 전원: Paperspace 연결됨 (기계 ...)`이 나오면 됩니다.
+
+### 자동 종료
+일정 시간 **사용이 없으면** 열린 에디터의 변경을 GitHub에 저장한 뒤 기계를 끕니다. 기본은 꺼져 있습니다.
+"사용" = MCP 도구 호출(상태 조회 제외), PC 웹 에디터 연결, SSH 로그인. 서버의 헤드리스 에디터는 사용으로 치지 않습니다.
+
+켜고 끄는 방법 (설정은 서버의 `data/power.json`에 저장되어 재시작 후에도 유지):
+- **Claude에게**: "자동 종료 2시간으로 켜 줘" / "자동 종료 꺼 줘" / "서버 전원 상태 알려 줘" (`set_auto_stop`, `get_server_power` 도구)
+- **GitHub Actions**: 아래 워크플로의 `auto-stop-on`(분 입력) / `auto-stop-off`
+- **서버에서**: `curl -s -X POST -H "Authorization: Bearer $(grep ^CLI_TOKEN= ~/godot-web-editor/mcp-server/.env | cut -d= -f2)" -H 'Content-Type: application/json' -d '{"auto_stop":true,"idle_minutes":120}' http://127.0.0.1:8787/api/power`
+
+Claude에게 "서버 꺼 줘"라고 하면 `stop_server` 도구로 바로 끌 수도 있습니다. 끈 뒤에는 Claude가 다시 켤 수 없으니 아래 워크플로로 켜세요.
+
+Paperspace API 키는 콘솔의 **Team settings → API Keys**에서 만들고, 표시되는 값을 **전부** 복사하세요(앞뒤 공백 없이).
+
+### GitHub Actions 워크플로 (비공개 저장소 `godot-mcp-automation`)
+`.github/workflows/server-power.yml` — 그 저장소(또는 GitHub 모바일 앱) → **Actions → 서버 전원 → Run workflow**
+
+| 할 일 | 동작 |
+|---|---|
+| `status` | 기계 상태, 중계 서버 상태, 자동 종료 설정 |
+| `start` | 켜고, 중계 서버와 에디터가 준비될 때까지 기다림 |
+| `stop` | 열린 에디터의 변경을 저장한 뒤 끄고, 꺼질 때까지 기다림 |
+| `auto-stop-on` / `auto-stop-off` | 자동 종료 켜기(분 입력) / 끄기 |
+
+시크릿은 **Settings → Secrets and variables → Actions → Repository secrets**에 등록합니다 (Codespaces/Dependabot 탭이 아님).
+
+| 이름 | 값 |
+|---|---|
+| `PAPERSPACE_API_KEY` | Paperspace API 키 |
+| `PAPERSPACE_MACHINE_ID` | 기계 ID |
+| `RELAY_CLI_TOKEN` | 중계 서버 `.env`의 `CLI_TOKEN` 값 (자동 종료 설정, 끄기 전 저장에 필요) |
+
 ## 보안 메모
 
 - 서버는 `127.0.0.1`에서만 열리고, 외부 접속은 Tailscale Funnel을 통해서만 들어옵니다.

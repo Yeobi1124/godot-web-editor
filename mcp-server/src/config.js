@@ -1,5 +1,6 @@
 // 설정: 환경 변수 또는 mcp-server/.env 파일
 import { readFileSync } from 'node:fs';
+import { hostname } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -60,6 +61,12 @@ export function readConfig(env = process.env) {
     githubApiBase: env.GITHUB_API_BASE || 'https://api.github.com',
     dataDir: resolve(ROOT, env.DATA_DIR || 'data'),
     extraRedirectUris: (env.EXTRA_REDIRECT_URIS || '').split(',').map((s) => s.trim()).filter(Boolean),
+    // 서버 전원 (Paperspace). 기계 ID를 비우면 Paperspace 기계의 호스트 이름(ps로 시작)을 쓴다
+    paperspaceApiKey: env.PAPERSPACE_API_KEY || null,
+    paperspaceMachineId: env.PAPERSPACE_MACHINE_ID || (/^ps[a-z0-9]+$/.test(hostname()) ? hostname() : null),
+    paperspaceApiBase: env.PAPERSPACE_API_BASE || 'https://api.paperspace.com/v1',
+    // 자동 종료 초기값 (처음 한 번만 사용, 이후에는 data/power.json의 값). 0이면 꺼짐
+    autoStopIdleMinutes: Number(env.AUTO_STOP_IDLE_MINUTES ?? 0),
     // 서버의 헤드리스 에디터용: 이 주소의 웹 에디터 페이지를 /app/ 아래로 전달한다 ('off'면 사용 안 함)
     editorPageUrl: env.EDITOR_PAGE_URL === 'off' ? null : (env.EDITOR_PAGE_URL || 'https://yeobi1124.github.io/godot-web-editor/').replace(/\/?$/, '/'),
   };

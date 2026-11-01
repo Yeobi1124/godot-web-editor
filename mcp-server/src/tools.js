@@ -22,13 +22,49 @@ const LIST_PROJECTS = {
   annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
 };
 
+const POWER_NOTE = '서버를 끄면 다시 켤 때까지 Claude가 이 도구들을 쓸 수 없고, 다시 켜려면 사용자가 GitHub Actions의 "서버 전원" 워크플로(start)를 실행해야 한다.';
+
+const POWER_TOOLS = [
+  {
+    name: 'get_server_power',
+    title: '서버 전원 상태',
+    description: `이 MCP 서버(작업용 컴퓨터)의 자동 종료 설정, 마지막 사용 시각, 자동 종료까지 남은 시간을 돌려준다. ${POWER_NOTE}`,
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    annotations: { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'set_auto_stop',
+    title: '자동 종료 설정',
+    description: `일정 시간 사용이 없으면 서버를 자동으로 끄는 기능을 켜거나 끈다. 사용 = MCP 도구 호출, PC 웹 에디터 연결, SSH 로그인. ${POWER_NOTE}`,
+    inputSchema: {
+      type: 'object',
+      additionalProperties: false,
+      properties: {
+        enabled: { type: 'boolean', description: '자동 종료 사용 여부' },
+        idle_minutes: { type: 'integer', minimum: 1, maximum: 10080, description: '사용이 없을 때 끄기까지 기다릴 시간(분)' },
+      },
+      required: ['enabled'],
+    },
+    annotations: { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'stop_server',
+    title: '서버 끄기',
+    description: `열려 있는 에디터의 변경을 GitHub에 저장한 뒤 서버(Paperspace 기계)를 지금 끈다. 사용자가 명시적으로 서버를 끄라고 할 때만 사용하라. ${POWER_NOTE}`,
+    inputSchema: { type: 'object', additionalProperties: false, properties: {} },
+    annotations: { readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+  },
+];
+const POWER_TOOL_NAMES = new Set(POWER_TOOLS.map((t) => t.name));
+
 const errorResult = (text) => ({ isError: true, content: [{ type: 'text', text }] });
 
 export class ToolRouter {
-  constructor({ link, github, defaultProject }) {
+  constructor({ link, github, defaultProject, power = null }) {
     this.link = link;
     this.github = github;
     this.defaultProject = defaultProject;
+    this.power = power;
   }
 
   /** MCP tools/list 결과. 탭 연결 여부와 상관없이 항상 같은 목록을 돌려준다. */
@@ -37,7 +73,20 @@ export class ToolRouter {
       const desc = toDescriptor(d);
       return { ...desc, inputSchema: { ...desc.inputSchema, properties: { ...desc.inputSchema.properties, project: PROJECT_PROP } } };
     });
-    return [...tools, LIST_PROJECTS];
+    return [...tools, LIST_PROJECTS, ...(this.power ? POWER_TOOLS : [])];
+  }
+
+  async #callPowerTool(name, args) {
+    if (name === 'get_server_power') return toMcpContent(await this.power.status());
+    if (name === 'set_auto_stop') {
+      if (typeof args.enabled !== 'boolean') return errorResult('enabled(true/false)가 필요합니다');
+      this.power.setAutoStop({ enabled: args.enabled, idleMinutes: args.idle_minutes });
+      return toMcpContent(await this.power.status());
+    }
+    // stop_server: 응답을 먼저 돌려준 뒤 종료를 진행한다 (종료 중에는 이 연결도 끊기므로)
+    if (!this.power.paperspace) return errorResult('Paperspace API 키나 기계 ID가 설정되지 않아 서버를 끌 수 없습니다.');
+    setTimeout(() => this.power.stopNow('Claude 요청').catch(() => {}), 500);
+    return toMcpContent({ stopping: true, message: `열린 에디터의 변경을 저장한 뒤 서버를 끕니다. ${POWER_NOTE}` });
   }
 
   async callTool(name, rawArgs = {}) {
@@ -47,7 +96,11 @@ export class ToolRouter {
     let result;
     let route = '-';
     try {
-      if (name === 'list_projects') {
+      if (this.power && name !== 'get_server_power' && name !== 'list_projects') this.power.markActivity(`MCP ${name}`);
+      if (POWER_TOOL_NAMES.has(name)) {
+        route = 'server';
+        result = this.power ? await this.#callPowerTool(name, args) : errorResult('서버 전원 관리가 설정되지 않았습니다.');
+      } else if (name === 'list_projects') {
         route = 'server';
         result = toMcpContent({ editor_tabs: this.link.summary(), default_project: this.defaultProject?.key ?? null });
       } else if (!def) {
