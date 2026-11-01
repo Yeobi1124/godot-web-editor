@@ -9,7 +9,8 @@
 //  - 페이지가 멈추거나 연결이 끊기면 다시 불러온다. 브라우저가 죽으면 종료 코드 1로 끝나고 systemd가 재시작한다
 //
 // 설정 (mcp-server/.env)
-//  DEFAULT_PROJECT            열 프로젝트 "소유자/저장소@브랜치"   (또는 HEADLESS_PROJECT)
+//  (프로젝트, 켜기/끄기, PC 에디터에 양보는 중계 서버의 /api/headless 설정을 따른다. GitHub Actions "헤드리스 설정"으로 변경)
+//  DEFAULT_PROJECT            처음 기본 프로젝트 "소유자/저장소@브랜치"   (또는 HEADLESS_PROJECT)
 //  GODOT_GITHUB_TOKEN         웹 에디터가 쓸 GitHub 토큰          (또는 HEADLESS_GITHUB_TOKEN)
 //  PUBLIC_URL, PAIRING_TOKEN, CLI_TOKEN, PORT   중계 서버 설정 그대로 사용
 //  HEADLESS_RELAY_URL         에디터가 접속할 중계 서버 주소 (기본 http://127.0.0.1:<PORT>, 같은 컴퓨터)
@@ -35,9 +36,10 @@ const fail = (msg) => {
   process.exit(2); // 설정 오류: systemd가 계속 재시작하지 않도록 2로 종료 (서비스에서 RestartPreventExitStatus=2)
 };
 
-const project = parseProject(env.HEADLESS_PROJECT || env.DEFAULT_PROJECT);
+// 프로젝트/켜기/양보 설정은 중계 서버(/api/headless)에서 받아 온다. .env 값은 중계 서버가 없을 때의 기본값
+let project = parseProject(env.HEADLESS_PROJECT || env.DEFAULT_PROJECT);
+let enabled = true;
 const githubToken = env.HEADLESS_GITHUB_TOKEN || env.GODOT_GITHUB_TOKEN;
-if (!project) fail('DEFAULT_PROJECT(또는 HEADLESS_PROJECT)를 "소유자/저장소@브랜치" 형식으로 설정하세요.');
 if (!githubToken) fail('GODOT_GITHUB_TOKEN(또는 HEADLESS_GITHUB_TOKEN)을 설정하세요.');
 for (const k of ['PUBLIC_URL', 'PAIRING_TOKEN', 'CLI_TOKEN']) if (!env[k]) fail(`${k}가 없습니다. 'npm run init'을 먼저 실행하세요.`);
 
@@ -47,7 +49,7 @@ const EDITOR_URL = env.HEADLESS_EDITOR_URL || `http://127.0.0.1:${env.PORT || 87
 // 서버 안의 에디터는 공개 주소(Funnel)를 돌아 나가지 않고 같은 컴퓨터의 중계 서버로 바로 접속한다
 const RELAY_FOR_PAGE = (env.HEADLESS_RELAY_URL || `http://127.0.0.1:${env.PORT || 8787}`).replace(/\/$/, '');
 const RELAY_LOCAL = `http://127.0.0.1:${env.PORT || 8787}`;
-const YIELD = env.HEADLESS_YIELD_TO_BROWSER !== '0';
+let YIELD = env.HEADLESS_YIELD_TO_BROWSER !== '0';
 const RESUME_AFTER_MS = Number(env.HEADLESS_RESUME_AFTER_SEC ?? 60) * 1000;
 const CHECK_MS = Number(env.HEADLESS_CHECK_SEC ?? 15) * 1000;
 const READY_TIMEOUT_MS = 5 * 60 * 1000;
@@ -59,7 +61,7 @@ const withTimeout = (p, ms, label) => Promise.race([p, sleep(ms).then(() => Prom
 
 let context = null;
 let page = null;
-let state = 'stopped'; // stopped | starting | running | paused
+let state = 'stopped'; // stopped | starting | running | paused | disabled
 let browserGoneSince = null;
 let unhealthy = 0;
 let mcpDown = 0;
@@ -71,6 +73,60 @@ async function fetchTabs() {
   const res = await fetch(`${RELAY_LOCAL}/api/tabs`, { headers: { Authorization: `Bearer ${env.CLI_TOKEN}` } });
   if (!res.ok) throw new Error(`중계 서버 응답 ${res.status}`);
   return (await res.json()).tabs;
+}
+
+/** 중계 서버의 헤드리스 설정. 예전 중계 서버(설정 API 없음)면 null */
+async function fetchSettings() {
+  const res = await fetch(`${RELAY_LOCAL}/api/headless`, { headers: { Authorization: `Bearer ${env.CLI_TOKEN}` } });
+  if (res.status === 404) return null;
+  if (!res.ok) throw new Error(`중계 서버 응답 ${res.status}`);
+  return res.json();
+}
+
+/**
+ * 중계 서버의 설정을 적용한다. 설정 때문에 에디터를 열거나 닫았으면 true
+ * (꺼짐/프로젝트 없음 -> 닫기, 프로젝트 변경 -> 저장 후 새 프로젝트로 다시 열기, 다시 켜짐 -> 열기)
+ */
+async function syncSettings() {
+  let s;
+  try {
+    s = await fetchSettings();
+  } catch (e) {
+    log(`설정을 가져오지 못했습니다(기존 설정 유지): ${e.message}`);
+    return false;
+  }
+  if (!s) return false;
+  YIELD = s.yield_to_browser !== false;
+  const wanted = s.project ? parseProject(s.project) : null;
+  const changedProject = (wanted?.key ?? null) !== (project?.key ?? null);
+  if (!s.enabled || !wanted) {
+    if (wanted) project = wanted;
+    if (state !== 'disabled') {
+      await closeEditor(!s.enabled ? '헤드리스 에디터 꺼짐' : '프로젝트가 설정되지 않음');
+      state = 'disabled';
+      log(!s.enabled ? '헤드리스 에디터가 꺼져 있습니다. 설정에서 켜면 다시 시작합니다.' : '열 프로젝트가 없습니다. 설정에서 프로젝트를 지정하세요.');
+      return true;
+    }
+    return false;
+  }
+  if (changedProject) {
+    const old = project?.key ?? '(없음)';
+    if (context) await closeEditor(`프로젝트 변경 ${old} -> ${wanted.key}`);
+    project = wanted;
+    log(`프로젝트를 ${wanted.key}(으)로 바꿉니다.`);
+    if (state === 'paused') {
+      browserGoneSince = null; // 새 프로젝트 기준으로 PC 에디터 연결을 다시 확인
+      return true;
+    }
+    await openEditor();
+    return true;
+  }
+  if (state === 'disabled' || state === 'stopped') {
+    log('헤드리스 에디터를 시작합니다.');
+    await openEditor();
+    return true;
+  }
+  return false;
 }
 
 async function openEditor() {
@@ -172,6 +228,8 @@ async function closeEditor(reason) {
 }
 
 async function tick() {
+  if (await syncSettings()) return;
+  if (state === 'disabled') return;
   let tabs = null;
   try {
     tabs = await fetchTabs();
@@ -230,9 +288,25 @@ async function tick() {
 }
 
 async function main() {
-  log(`프로젝트 ${project.key}, PC 에디터 연결 시 ${YIELD ? '양보함' : '양보 안 함'}`);
-  // 시작할 때 이미 PC 에디터가 연결되어 있으면 기다린다
+  // 중계 서버의 설정 반영 (중계 서버가 아직 안 떴으면 .env 기본값으로 시작하고, 이후 주기 확인에서 반영)
   try {
+    const s = await fetchSettings();
+    if (s) {
+      enabled = s.enabled;
+      project = s.project ? parseProject(s.project) : project;
+      YIELD = s.yield_to_browser !== false;
+    }
+  } catch (e) {
+    log(`설정 확인 실패(.env 기본값 사용): ${e.message}`);
+  }
+  if (!enabled || !project) {
+    state = 'disabled';
+    log(!enabled ? '헤드리스 에디터가 꺼져 있습니다. 설정에서 켜면 시작합니다.' : '열 프로젝트가 없습니다. 설정에서 프로젝트를 지정하세요.');
+  } else {
+    log(`프로젝트 ${project.key}, PC 에디터 연결 시 ${YIELD ? '양보함' : '양보 안 함'}`);
+  }
+  // 시작할 때 이미 PC 에디터가 연결되어 있으면 기다린다
+  if (state !== 'disabled') try {
     const tabs = await fetchTabs();
     if (YIELD && tabs.some((t) => t.project === project.key && t.kind === 'browser')) {
       state = 'paused';
@@ -241,7 +315,7 @@ async function main() {
   } catch (e) {
     log(`중계 서버 확인 실패(계속 진행): ${e.message}`);
   }
-  if (state !== 'paused') await openEditor();
+  if (state !== 'paused' && state !== 'disabled') await openEditor();
   for (;;) {
     await sleep(CHECK_MS);
     try {

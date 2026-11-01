@@ -63,8 +63,13 @@ export class ToolRouter {
   constructor({ link, github, defaultProject, power = null }) {
     this.link = link;
     this.github = github;
-    this.defaultProject = defaultProject;
+    // 고정값 또는 함수 (헤드리스 설정의 프로젝트를 따라가도록)
+    this.getDefaultProject = typeof defaultProject === 'function' ? defaultProject : () => defaultProject;
     this.power = power;
+  }
+
+  get defaultProject() {
+    return this.getDefaultProject() ?? null;
   }
 
   /** MCP tools/list 결과. 탭 연결 여부와 상관없이 항상 같은 목록을 돌려준다. */

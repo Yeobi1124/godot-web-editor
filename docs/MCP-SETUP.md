@@ -132,7 +132,9 @@ claude mcp add --transport http godot https://<PUBLIC_URL의 호스트>/mcp --he
 - 서버 안의 에디터는 중계 서버가 전달하는 페이지(`http://127.0.0.1:8787/app/`)로 열립니다. 페이지와 MCP 연결이 같은 컴퓨터 안에서 이루어지므로
   공개 주소(Funnel)를 거치지 않고, 브라우저의 로컬 네트워크 접근 차단에도 걸리지 않습니다.
 
-필요한 설정: 4단계의 `DEFAULT_PROJECT`(예: `Yeobi1124/godot-test@main`)와 `GODOT_GITHUB_TOKEN`. 비어 있으면 `npm run init`을 다시 실행해 입력하세요.
+필요한 설정: `GODOT_GITHUB_TOKEN`(열 저장소들에 접근 가능한 토큰). 처음 열 프로젝트는 4단계의 `DEFAULT_PROJECT`이고,
+이후에는 GitHub Actions의 **헤드리스 설정** 워크플로로 바꿉니다(설정은 서버의 `data/headless.json`에 저장). 다른 저장소로 바꾸려면
+그 저장소를 토큰의 접근 목록에 먼저 추가하세요. 접근할 수 없으면 워크플로가 거부합니다.
 
 ```bash
 cd ~/godot-web-editor/mcp-server/headless && npm ci
@@ -160,7 +162,7 @@ journalctl -u godot-headless-editor -f
 | 끄기 / 켜기 | `sudo systemctl stop godot-headless-editor` / `sudo systemctl start godot-headless-editor` |
 | 부팅 시 자동 시작 끄기 | `sudo systemctl disable godot-headless-editor` |
 | 업데이트 후 | `cd ~/godot-web-editor/mcp-server/headless && npm ci && sudo systemctl restart godot-headless-editor` |
-| PC 에디터에 양보하지 않기 | `.env`에 `HEADLESS_YIELD_TO_BROWSER=0` (권장하지 않음) |
+| 프로젝트 바꾸기 / 켜기·끄기 / PC 에디터에 양보 여부 | **GitHub Actions `헤드리스 설정` 워크플로** (`godot-mcp-automation`). 서버 재시작 없이 바로 적용되고, 바꾸기 전에 열려 있던 프로젝트의 변경을 저장합니다 |
 | 다시 켜기까지 대기 시간 | `.env`에 `HEADLESS_RESUME_AFTER_SEC=60` |
 
 로그에 "MCP 중계 서버에 연결되지 않습니다"가 계속 나오면 `.env`에서 `HEADLESS_EDITOR_URL`, `HEADLESS_RELAY_URL` 줄을 지우고(기본값 사용)

@@ -155,7 +155,34 @@ try {
   const fromPc = await call('read_file', { path: 'notes/from-pc.txt' });
   check('재시작 후 그 사이의 GitHub 변경을 받아 옴', !fromPc.isError && json(fromPc).content === 'edited on PC');
 
-  // 4. 종료 신호 -> 정상 종료
+  // 4. 설정 변경 (GitHub Actions "헤드리스 설정"이 호출하는 /api/headless)
+  const setHeadless = async (body) => {
+    const r = await fetch(`${RELAY}/api/headless`, { method: 'POST', headers: { Authorization: `Bearer ${CLI_TOKEN}`, 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+    return { status: r.status, body: await r.json() };
+  };
+  const bad = await setHeadless({ project: 'nobody/nothing@main' });
+  check('접근할 수 없는 저장소로는 바꾸지 않음', bad.status === 422, bad.body.error);
+  await call('write_files', { files: [{ path: 'notes/before-switch.txt', content: 'saved before switch' }] });
+  const sw = await setHeadless({ project: 'tester/game@dev' });
+  check('프로젝트를 dev 브랜치로 변경', sw.status === 200 && sw.body.project === 'tester/game@dev', JSON.stringify(sw.body));
+  check('변경 전 에디터의 내용을 저장', !!(await waitFor(async () => gh.text('notes/before-switch.txt') === 'saved before switch', 30000)));
+  const onDev = await waitFor(async () => (await tabs()).find((t) => t.kind === 'headless' && t.editor_ready && t.project === 'tester/game@dev'), 120000, 2000);
+  check('헤드리스 에디터가 새 프로젝트로 다시 열림', !!onDev, JSON.stringify(onDev));
+  check('새 브랜치가 GitHub에 생김', !!gh.head('dev'));
+  const st2 = json(await call('get_status'));
+  check('MCP 도구도 새 프로젝트를 다룸', st2.branch === 'dev', `${st2.repository}@${st2.branch}`);
+
+  await setHeadless({ enabled: false });
+  const off = await waitFor(async () => !(await tabs()).some((t) => t.kind === 'headless'), 30000);
+  check('헤드리스 끄기: 에디터 종료', !!off);
+  await setHeadless({ enabled: true });
+  const on = await waitFor(async () => (await tabs()).find((t) => t.kind === 'headless' && t.editor_ready && t.project === 'tester/game@dev'), 120000, 2000);
+  check('헤드리스 켜기: 다시 시작', !!on);
+  await setHeadless({ project: 'tester/game@main' });
+  const back = await waitFor(async () => (await tabs()).find((t) => t.kind === 'headless' && t.editor_ready && t.project === 'tester/game@main'), 120000, 2000);
+  check('원래 프로젝트로 되돌리기', !!back);
+
+  // 5. 종료 신호 -> 정상 종료
   runner.kill('SIGTERM');
   const exited = await waitFor(async () => runnerExit !== null, 60000, 500);
   check('SIGTERM에 정상 종료(코드 0)', exited && runnerExit === 0, `exit=${runnerExit}`);

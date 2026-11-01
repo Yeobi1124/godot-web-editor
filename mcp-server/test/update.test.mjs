@@ -60,13 +60,12 @@ before(() => {
   dev = join(tmp, 'dev');
   git(tmp, 'clone', '-q', remote, dev);
   git(dev, 'checkout', '-q', '-b', 'main');
-  for (const f of git(REPO, 'ls-files').split('\n')) {
+  // 추적 중인 파일 + 아직 커밋하지 않은 새 파일 (작업 중인 코드 그대로 시험)
+  for (const f of git(REPO, 'ls-files', '--cached', '--others', '--exclude-standard').split('\n')) {
     if (!f.startsWith('mcp-server/') && !f.startsWith('web/js/') && f !== '.gitignore') continue;
     mkdirSync(dirname(join(dev, f)), { recursive: true });
     cpSync(join(REPO, f), join(dev, f));
   }
-  // 작업 중인(아직 커밋 안 된) update.sh, server.js도 반영
-  for (const f of ['mcp-server/deploy/update.sh', 'mcp-server/src/server.js']) cpSync(join(REPO, f), join(dev, f));
   git(dev, 'add', '-A');
   git(dev, 'commit', '-q', '-m', 'initial');
   git(dev, 'push', '-q', '-u', 'origin', 'main');

@@ -20,6 +20,8 @@ import { SCOPE, SingleUserOAuthProvider } from './auth.js';
 import { loadDotEnv, readConfig, ROOT } from './config.js';
 import { EditorLink } from './editor-link.js';
 import { GitHubBackend } from './github-backend.js';
+import { GitHubClient } from '../../web/js/github.js';
+import { HeadlessSettings } from './headless-settings.js';
 import { log, warn } from './log.js';
 import { mcpHandler } from './mcp.js';
 import { PaperspaceClient } from './paperspace.js';
@@ -116,7 +118,28 @@ export function createRelay(config) {
     log,
     ...(config.powerOverrides ?? {}),
   });
-  const router = new ToolRouter({ link, github, defaultProject: config.defaultProject, power });
+  const headless = new HeadlessSettings({
+    dataDir: config.dataDir,
+    defaults: {
+      project: config.headlessProject ?? config.defaultProject,
+      enabled: config.headlessEnabled ?? true,
+      yieldToBrowser: config.headlessYield ?? true,
+    },
+    // 새 프로젝트로 바꾸기 전에 서버 토큰으로 접근(쓰기)할 수 있는지 확인
+    verifyProject: async (p) => {
+      if (!config.githubToken) throw new Error('GODOT_GITHUB_TOKEN이 없어 저장소를 확인할 수 없습니다');
+      const gh = new GitHubClient({ token: config.githubToken, owner: p.owner, repo: p.repo, apiBase: config.githubApiBase });
+      let repo;
+      try {
+        repo = await gh.getRepo();
+      } catch (e) {
+        throw new Error(`${p.owner}/${p.repo}에 접근할 수 없습니다 (토큰의 저장소 목록에 추가했는지 확인): ${e.status ?? ''} ${e.message}`.trim());
+      }
+      if (repo.permissions && !repo.permissions.push) throw new Error(`${p.owner}/${p.repo}에 쓰기 권한이 없습니다 (토큰의 Contents 권한을 Read and write로)`);
+    },
+    log,
+  });
+  const router = new ToolRouter({ link, github, defaultProject: () => headless.project, power });
 
   const app = express();
   app.disable('x-powered-by');
@@ -135,7 +158,7 @@ export function createRelay(config) {
       last_update: lastUpdate,
       editor_tabs: link.tabs.size,
       github_fallback: !!github,
-      default_project: config.defaultProject?.key ?? null,
+      default_project: headless.project?.key ?? null,
     });
   });
   app.get('/', (_req, res) => {
@@ -159,6 +182,19 @@ export function createRelay(config) {
   app.get('/api/tabs', bearer, (_req, res) => res.json({ tabs: link.summary() }));
   // 서버 전원 (GitHub Actions 워크플로 등에서 사용)
   app.get('/api/power', bearer, async (_req, res) => res.json(await power.status()));
+  // 서버 헤드리스 에디터 설정 (헤드리스 실행기와 GitHub Actions 워크플로가 사용)
+  app.get('/api/headless', bearer, (_req, res) =>
+    res.json({ ...headless.toJSON(), running: link.summary().filter((t) => t.kind === 'headless') }),
+  );
+  app.post('/api/headless', bearer, express.json(), async (req, res) => {
+    const b = req.body ?? {};
+    try {
+      const s = await headless.update({ enabled: b.enabled, project: b.project, yieldToBrowser: b.yield_to_browser });
+      res.json({ ...s, running: link.summary().filter((t) => t.kind === 'headless') });
+    } catch (e) {
+      res.status(e.status ?? 500).json({ error: e.message });
+    }
+  });
   app.post('/api/power', bearer, express.json(), async (req, res) => {
     const { auto_stop: enabled, idle_minutes: idleMinutes } = req.body ?? {};
     if (enabled !== undefined && typeof enabled !== 'boolean') return res.status(400).json({ error: 'auto_stop must be boolean' });
@@ -186,6 +222,7 @@ export function createRelay(config) {
     provider,
     router,
     power,
+    headless,
     commit,
     listen: (port = config.port, host = config.host) => new Promise((resolve) => server.listen(port, host, () => resolve(server.address()))),
     close: () =>
@@ -213,7 +250,9 @@ async function main() {
   log(
     `서버 전원: Paperspace ${ps.paperspace_configured ? `연결됨 (기계 ${ps.machine_id})` : '설정 안 됨'}, 자동 종료 ${ps.auto_stop ? `켜짐 (${ps.idle_minutes}분)` : '꺼짐'}`,
   );
-  log(config.githubToken ? `GitHub 대체 처리: 사용 (기본 프로젝트 ${config.defaultProject?.key ?? '없음'})` : 'GitHub 대체 처리: 사용 안 함');
+  log(config.githubToken ? `GitHub 대체 처리: 사용 (기본 프로젝트 ${relay.headless.project?.key ?? '없음'})` : 'GitHub 대체 처리: 사용 안 함');
+  const hs = relay.headless.toJSON();
+  log(`헤드리스 에디터 설정: ${hs.enabled ? '켜짐' : '꺼짐'}, 프로젝트 ${hs.project ?? '(없음)'}`);
   const stop = async () => {
     log('종료 중...');
     await relay.close();

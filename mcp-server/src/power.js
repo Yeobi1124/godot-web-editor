@@ -151,6 +151,13 @@ export class PowerManager {
       throw e;
     }
     this.lastStop = { at: new Date(this.now()).toISOString(), reason, saved };
+    // 보통은 기계가 꺼지면서 이 프로세스도 끝난다. 10분이 지나도 살아 있으면(종료 요청이 처리되지 않음) 다시 끌 수 있게 한다
+    setTimeout(() => {
+      if (this.stopping) {
+        this.log('종료 요청 후 10분이 지나도 서버가 켜져 있습니다. 다시 끌 수 있도록 상태를 초기화합니다.');
+        this.stopping = false;
+      }
+    }, 10 * 60_000).unref();
     this.log(`Paperspace에 기계 중지를 요청했습니다 (${reason}). 저장한 에디터: ${saved.length}개`);
     return this.lastStop;
   }

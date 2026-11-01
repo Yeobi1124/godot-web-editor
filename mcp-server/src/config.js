@@ -58,6 +58,9 @@ export function readConfig(env = process.env) {
     allowedOrigins: (env.ALLOWED_ORIGINS || 'https://yeobi1124.github.io').split(',').map((s) => toOrigin(s.trim())).filter(Boolean),
     githubToken: env.GODOT_GITHUB_TOKEN || null,
     defaultProject: parseProject(env.DEFAULT_PROJECT),
+    // 헤드리스 에디터 초기 설정 (처음 한 번만 사용, 이후에는 data/headless.json의 값)
+    headlessProject: parseProject(env.HEADLESS_PROJECT) ?? null,
+    headlessYield: env.HEADLESS_YIELD_TO_BROWSER !== '0',
     githubApiBase: env.GITHUB_API_BASE || 'https://api.github.com',
     dataDir: resolve(ROOT, env.DATA_DIR || 'data'),
     extraRedirectUris: (env.EXTRA_REDIRECT_URIS || '').split(',').map((s) => s.trim()).filter(Boolean),
