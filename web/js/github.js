@@ -73,16 +73,19 @@ export class GitHubClient {
     return this.request('GET', `${this.repoPath}/git/commits/${sha}`);
   }
 
-  /** 트리를 재귀로 펼쳐 { path: blobSha } 형태로 반환 */
-  async getTreeFiles(treeSha) {
+  /** 트리를 재귀로 펼친 파일 항목: [{ path, sha, size }] */
+  async getTreeEntries(treeSha) {
     const tree = await this.request('GET', `${this.repoPath}/git/trees/${treeSha}?recursive=1`);
     if (tree.truncated) {
       throw new GitHubError(0, '저장소 파일이 너무 많아 GitHub가 목록을 잘라서 보냈습니다. 지원하지 않는 크기입니다.');
     }
+    return tree.tree.filter((e) => e.type === 'blob' && e.mode !== '160000').map((e) => ({ path: e.path, sha: e.sha, size: e.size }));
+  }
+
+  /** 트리를 재귀로 펼쳐 { path: blobSha } 형태로 반환 */
+  async getTreeFiles(treeSha) {
     const files = {};
-    for (const e of tree.tree) {
-      if (e.type === 'blob' && e.mode !== '160000') files[e.path] = e.sha;
-    }
+    for (const e of await this.getTreeEntries(treeSha)) files[e.path] = e.sha;
     return files;
   }
 

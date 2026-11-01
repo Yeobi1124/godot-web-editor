@@ -1,4 +1,6 @@
-# MCP 서버 설계 (초안)
+# MCP 서버 설계
+
+> 상태: M1~M3 구현 완료 (`mcp-server/`). 설치는 [MCP-SETUP.md](MCP-SETUP.md).
 
 목표: **Claude 앱(claude.ai, 데스크톱, 모바일)과 Claude Code에서 웹 에디터 프로젝트를 직접 다루기.**
 에디터 탭이 열려 있으면 실행 중인 에디터를 실시간으로 조작하고, 탭이 없으면 GitHub 저장소를 직접 수정한다.
@@ -39,13 +41,16 @@
 
 | 모듈 | 역할 |
 |---|---|
-| `server.js` | HTTP 서버 (Express), 라우팅, 설정 읽기 |
-| `mcp.js` | 공식 MCP TypeScript SDK의 `McpServer` + Streamable HTTP 전송. 요청마다 인증 정보로 세션 확인 |
-| `auth.js` | 1인용 OAuth 2.1 인증 서버 (SDK의 `mcpAuthRouter`에 저장소만 구현). Claude Code용 고정 Bearer 토큰도 검사 |
-| `editor-link.js` | `/editor` WebSocket. 탭 등록, 호출 전달, 응답 대기, 하트비트 |
-| `router.js` | 도구 호출을 탭 또는 GitHub로 보냄 |
-| `github-backend.js` | 탭이 없을 때의 파일 도구 구현 (페이지의 `github.js`와 같은 Git Data API 방식) |
-| `store.js` | OAuth 클라이언트/토큰을 JSON 파일에 저장 (해시로 저장) |
+| `server.js` | HTTP 서버 (Express), 라우팅 조립, 실행 진입점 |
+| `config.js` | 환경 변수/`.env` 읽기 |
+| `mcp.js` | 공식 MCP TypeScript SDK의 저수준 `Server` + Streamable HTTP 전송 (stateless, 요청마다 새로 생성) |
+| `auth.js` | 1인용 OAuth 2.1 인증 서버 (SDK의 `mcpAuthRouter`에 저장소와 로그인 화면만 구현), Claude Code용 고정 Bearer 토큰 검사 |
+| `editor-link.js` | `/editor` WebSocket. Origin/페어링 검사, 탭 등록, 호출 전달, 응답 대기, 하트비트 |
+| `tools.js` | 도구 목록 구성과 호출 라우팅 (탭 / GitHub / 오류) |
+| `github-backend.js` | 탭이 없을 때의 파일 도구 구현 (페이지의 `web/js/github.js`를 그대로 import) |
+| `init.js` | `.env` 초기 설정 (비밀값 생성) |
+
+도구 정의는 `web/js/tool-defs.js` 하나를 페이지와 서버가 함께 import한다. 그래서 탭이 없을 때도 서버는 같은 도구 목록을 내보낸다.
 
 설정 (환경 변수 또는 `.env`):
 
@@ -57,7 +62,8 @@
 | `CLI_TOKEN` | Claude Code가 헤더로 보내는 고정 토큰 |
 | `PAIRING_TOKEN` | 에디터 탭이 접속할 때 쓰는 토큰 (첫 실행 시 자동 생성해서 출력) |
 | `ALLOWED_ORIGINS` | 에디터 페이지 주소. 기본 `https://yeobi1124.github.io` |
-| `GITHUB_TOKEN`, `DEFAULT_PROJECT` | (선택) 탭이 없을 때 쓸 GitHub 토큰과 기본 저장소 `owner/repo@branch` |
+| `GODOT_GITHUB_TOKEN`, `DEFAULT_PROJECT` | (선택) 탭이 없을 때 쓸 GitHub 토큰과 기본 저장소 `owner/repo@branch`. 다른 프로그램의 `GITHUB_TOKEN`과 섞이지 않도록 전용 이름을 쓴다 |
+| `HOST` | 기본 `127.0.0.1` (터널이 같은 컴퓨터에서 접속하므로 외부에 직접 열지 않음) |
 | `DATA_DIR` | 토큰 저장 위치. 기본 `./data` |
 
 ### 2.2 에디터 페이지 쪽 추가 (`web/js/mcp-link.js`)
@@ -137,11 +143,19 @@ OAuth 세부 사항 (1인용으로 단순화):
 
 ## 8. 알려진 제약
 
-- **에디터 탭이 백그라운드에 있으면** 브라우저가 화면 그리기를 멈춘다. 파일 읽기/쓰기는 되지만,
-  Godot 메인 루프에서 처리되는 일(파일 시스템 재검색, 스크린샷 갱신)은 탭이 다시 보일 때까지 늦어질 수 있다. 시험해서 확인 필요.
+- **에디터 탭이 백그라운드(다른 탭, 최소화)일 때는 아직 실제 브라우저에서 확인하지 못했다.** 테스트 브라우저는 숨김 상태를 재현하지 못했다.
+  예상: WebSocket 메시지와 브리지 호출(파일 읽기/쓰기)은 동작한다. 하지만 브라우저가 Godot의 프레임 처리를 멈추므로,
+  에디터 화면 갱신, 스크린샷 내용 갱신, Godot이 IndexedDB에 저장하는 시점, 그에 따른 자동 커밋은 탭이 다시 보일 때까지 늦어질 수 있다.
+  데이터가 사라지지는 않는다. `get_status`와 `list_projects`가 `tab_visible`을 알려 주고, 시간 초과 오류는 탭을 앞으로 가져오라고 안내한다.
 - 탭이 없을 때는 스크린샷, 게임 실행, 로그 같은 에디터 기능을 쓸 수 없다.
 - claude.ai 커넥터의 OAuth 흐름은 클라이언트 쪽 구현에 따라 문제가 생기는 사례가 보고되어 있다. Claude Code(Bearer)로 먼저 검증한다.
 - 서버 컴퓨터가 꺼져 있으면 MCP는 쓸 수 없다 (웹 에디터와 GitHub 동기화는 상관없이 동작).
+
+## 측정값
+
+같은 컴퓨터에서 MCP 클라이언트 → 중계 서버 → 실제 웹 에디터(헤드리스) 왕복, 네트워크 지연 제외 (`tests/e2e-mcp.mjs`):
+`read_file` 약 6~15ms, `write_files` 약 30ms, `screenshot`(1024px) 약 60ms, 그 외 대부분 20ms 이하.
+실사용에서는 Anthropic 서버 ↔ 서버 컴퓨터 구간(한국-미국 왕복 약 150~250ms)이 더해진다.
 
 ## 9. 단계별 계획
 
@@ -153,8 +167,8 @@ OAuth 세부 사항 (1인용으로 단순화):
 | M4 | 설치 안내, systemd/launchd/Docker 예시, Tailscale Funnel 설정 문서 | 사용자 서버에 설치 |
 | 이후 | CIMD, MCP 리소스(프로젝트 파일 읽기 전용 노출), 프롬프트(Godot 씬 편집 가이드) | |
 
-## 10. 정해야 할 것
+## 10. 결정 사항
 
-1. 서버 컴퓨터 OS (설치 스크립트와 상시 실행 방식이 달라짐)
-2. 외부 공개 방법: 도메인이 있으면 Cloudflare Tunnel, 없으면 Tailscale Funnel
-3. 주로 쓸 클라이언트: claude.ai·모바일이면 M3까지 필요, Claude Code만이면 M2에서 충분
+- 서버 컴퓨터: Ubuntu, 상시 실행은 systemd
+- 외부 공개: 도메인이 없으므로 Tailscale Funnel
+- 클라이언트: claude.ai·모바일(OAuth)과 Claude Code(Bearer) 모두 지원
