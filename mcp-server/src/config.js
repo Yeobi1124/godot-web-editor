@@ -30,6 +30,15 @@ export function parseProject(text) {
   return { owner: m[1], repo: m[2], branch, key: `${m[1]}/${m[2]}@${branch}` };
 }
 
+function toOrigin(text) {
+  if (!text) return '';
+  try {
+    return new URL(text).origin;
+  } catch {
+    return text.replace(/\/+$/, '');
+  }
+}
+
 export function readConfig(env = process.env) {
   const required = (k) => {
     const v = env[k];
@@ -44,7 +53,8 @@ export function readConfig(env = process.env) {
     adminPassword: required('ADMIN_PASSWORD'),
     cliToken: required('CLI_TOKEN'),
     pairingToken: required('PAIRING_TOKEN'),
-    allowedOrigins: (env.ALLOWED_ORIGINS || 'https://yeobi1124.github.io').split(',').map((s) => s.trim()).filter(Boolean),
+    // 전체 주소(https://x.github.io/godot-web-editor/)를 넣어도 Origin(https://x.github.io)만 쓴다
+    allowedOrigins: (env.ALLOWED_ORIGINS || 'https://yeobi1124.github.io').split(',').map((s) => toOrigin(s.trim())).filter(Boolean),
     githubToken: env.GODOT_GITHUB_TOKEN || null,
     defaultProject: parseProject(env.DEFAULT_PROJECT),
     githubApiBase: env.GITHUB_API_BASE || 'https://api.github.com',

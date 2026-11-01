@@ -12,6 +12,7 @@
 //  DEFAULT_PROJECT            열 프로젝트 "소유자/저장소@브랜치"   (또는 HEADLESS_PROJECT)
 //  GODOT_GITHUB_TOKEN         웹 에디터가 쓸 GitHub 토큰          (또는 HEADLESS_GITHUB_TOKEN)
 //  PUBLIC_URL, PAIRING_TOKEN, CLI_TOKEN, PORT   중계 서버 설정 그대로 사용
+//  HEADLESS_RELAY_URL         에디터가 접속할 중계 서버 주소 (기본 http://127.0.0.1:<PORT>, 같은 컴퓨터)
 //  HEADLESS_EDITOR_URL        기본 https://yeobi1124.github.io/godot-web-editor/
 //  HEADLESS_YIELD_TO_BROWSER  1(기본)이면 PC 에디터가 연결될 때 멈춤, 0이면 멈추지 않음
 //  HEADLESS_RESUME_AFTER_SEC  PC 에디터가 사라진 뒤 다시 켜기까지 기다리는 시간 (기본 60)
@@ -41,7 +42,8 @@ if (!githubToken) fail('GODOT_GITHUB_TOKEN(또는 HEADLESS_GITHUB_TOKEN)을 설�
 for (const k of ['PUBLIC_URL', 'PAIRING_TOKEN', 'CLI_TOKEN']) if (!env[k]) fail(`${k}가 없습니다. 'npm run init'을 먼저 실행하세요.`);
 
 const EDITOR_URL = env.HEADLESS_EDITOR_URL || 'https://yeobi1124.github.io/godot-web-editor/';
-const RELAY_FOR_PAGE = (env.HEADLESS_RELAY_URL || env.PUBLIC_URL).replace(/\/$/, '');
+// 서버 안의 에디터는 공개 주소(Funnel)를 돌아 나가지 않고 같은 컴퓨터의 중계 서버로 바로 접속한다
+const RELAY_FOR_PAGE = (env.HEADLESS_RELAY_URL || `http://127.0.0.1:${env.PORT || 8787}`).replace(/\/$/, '');
 const RELAY_LOCAL = `http://127.0.0.1:${env.PORT || 8787}`;
 const YIELD = env.HEADLESS_YIELD_TO_BROWSER !== '0';
 const RESUME_AFTER_MS = Number(env.HEADLESS_RESUME_AFTER_SEC ?? 60) * 1000;
@@ -58,6 +60,7 @@ let page = null;
 let state = 'stopped'; // stopped | starting | running | paused
 let browserGoneSince = null;
 let unhealthy = 0;
+let mcpDown = 0;
 let shuttingDown = false;
 let closingOnPurpose = false;
 
@@ -79,7 +82,7 @@ async function openEditor() {
     handleSIGINT: false,
     handleSIGTERM: false,
     handleSIGHUP: false,
-    args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist'],
+    args: ['--use-angle=swiftshader', '--enable-unsafe-swiftshader', '--ignore-gpu-blocklist', ...(env.HEADLESS_CHROMIUM_ARGS ? env.HEADLESS_CHROMIUM_ARGS.split(' ') : [])],
   });
   context.on('close', () => {
     if (!shuttingDown && !closingOnPurpose) {
@@ -140,6 +143,7 @@ async function health() {
       ready: document.body.dataset.ready === 'true',
       bridge: !!window.__gwe?.bridge?.ready,
       mcp: window.__gwe?.mcp?.status ?? 'off',
+      mcpDetail: window.__gwe?.mcp?.detail ?? '',
       pending: window.__gwe?.sync?.status?.pending?.length ?? 0,
     })),
     10000,
@@ -197,9 +201,20 @@ async function tick() {
   if (state === 'running') {
     try {
       const h = await health();
-      const ok = h.ready && h.bridge && h.mcp === 'connected';
+      // 에디터 자체가 멈췄을 때만 재시작한다. MCP 연결 문제는 재시작해도 해결되지 않으므로 원인만 알린다.
+      const ok = h.ready && h.bridge;
       unhealthy = ok ? 0 : unhealthy + 1;
       if (!ok) log(`상태 이상 ${unhealthy}/3: ${JSON.stringify(h)}`);
+      if (ok && h.mcp !== 'connected') {
+        mcpDown++;
+        if (mcpDown === 2 || mcpDown % 20 === 0) {
+          log(`MCP 중계 서버에 연결되지 않습니다 (${h.mcp}${h.mcpDetail ? `: ${h.mcpDetail}` : ''}). 에디터가 접속하는 주소: ${RELAY_FOR_PAGE}/editor`);
+          log('확인: 중계 서버 로그(journalctl -u godot-mcp-relay)에 "에디터 연결 거부"가 있는지, .env의 PAIRING_TOKEN/ALLOWED_ORIGINS가 맞는지');
+        }
+      } else if (ok) {
+        if (mcpDown >= 2) log('MCP 중계 서버에 연결되었습니다.');
+        mcpDown = 0;
+      }
     } catch (e) {
       unhealthy++;
       log(`상태 확인 실패 ${unhealthy}/3: ${e.message}`);
