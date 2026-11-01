@@ -133,9 +133,13 @@ export class EditorLink extends EventEmitter {
     }
   }
 
-  /** 프로젝트 키(owner/repo@branch)에 맞는 탭. 없으면 가장 최근에 연결된 탭(프로젝트 지정이 없을 때만) */
+  /**
+   * 프로젝트 키(owner/repo@branch)에 맞는 탭. 없으면 가장 최근에 연결된 탭(프로젝트 지정이 없을 때만).
+   * 사람이 쓰는 브라우저 탭을 서버의 헤드리스 에디터보다 우선한다.
+   */
   findTab(projectKey) {
-    const tabs = [...this.tabs.values()].sort((a, b) => b.connectedAt - a.connectedAt);
+    const rank = (t) => (t.app.kind === 'headless' ? 0 : 1);
+    const tabs = [...this.tabs.values()].sort((a, b) => rank(b) - rank(a) || b.connectedAt - a.connectedAt);
     if (projectKey) return tabs.find((t) => t.project === projectKey) ?? null;
     return tabs[0] ?? null;
   }
@@ -158,6 +162,7 @@ export class EditorLink extends EventEmitter {
   summary() {
     return [...this.tabs.values()].map((t) => ({
       project: t.project,
+      kind: t.app.kind === 'headless' ? 'headless' : 'browser',
       connected_at: new Date(t.connectedAt).toISOString(),
       editor_ready: !!t.state.bridgeReady,
       tab_visible: t.state.visible !== false,
