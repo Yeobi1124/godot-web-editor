@@ -84,7 +84,8 @@ export class McpLink extends EventTarget {
         protocol: 1,
         pairingToken: this.token,
         project: { owner: this.info.owner, repo: this.info.repo, branch: this.info.branch },
-        app: { version: this.info.appVersion, godot: this.info.godotVersion },
+        // 서버의 헤드리스 에디터(자동화 브라우저)인지 사람이 쓰는 브라우저인지 (navigator.webdriver는 자동화 시 true)
+        app: { version: this.info.appVersion, godot: this.info.godotVersion, kind: navigator.webdriver ? 'headless' : 'browser' },
         tools: this.api.toolDescriptors(),
       });
     };

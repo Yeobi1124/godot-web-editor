@@ -62,6 +62,8 @@ export function createRelay(config) {
 
   const bearer = requireBearerAuth({ verifier: provider, resourceMetadataUrl: getOAuthProtectedResourceMetadataUrl(mcpUrl) });
   app.all('/mcp', bearer, express.json({ limit: '50mb' }), mcpHandler(router, VERSION));
+  // 연결된 에디터 탭 목록 (헤드리스 에디터 실행기가 PC 에디터 연결 여부를 확인할 때 사용)
+  app.get('/api/tabs', bearer, (_req, res) => res.json({ tabs: link.summary() }));
 
   const server = createServer(app);
   server.on('upgrade', (req, socket, head) => {

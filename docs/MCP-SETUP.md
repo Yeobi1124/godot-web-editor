@@ -122,6 +122,45 @@ claude mcp add --transport http godot https://<PUBLIC_URL의 호스트>/mcp --he
 | 모든 Claude 연결 끊기 | `mcp-server/data/auth.json` 삭제 후 재시작 |
 | 외부 공개 중지 | `sudo tailscale funnel reset` |
 
+## 8. (선택) 서버에서 에디터 상시 실행 — PC 없이 휴대폰에서도 모든 도구 사용
+
+웹 에디터를 서버의 헤드리스 Chromium으로 계속 띄워 둡니다. PC 브라우저를 열지 않아도 Claude가 스크린샷, 게임 실행, 로그까지 쓸 수 있습니다.
+
+- **PC에서 웹 에디터를 열면** 서버 쪽 에디터가 변경을 GitHub에 저장하고 **스스로 멈춥니다** (두 에디터가 같은 프로젝트를 동시에 고치지 않도록).
+- **PC 에디터를 닫으면** 1분 뒤 서버 쪽 에디터가 GitHub에서 최신 상태를 받아 다시 시작합니다.
+- CPU로 화면을 그리므로 메모리를 1~2GB 정도 씁니다.
+
+필요한 설정: 4단계의 `DEFAULT_PROJECT`(예: `Yeobi1124/godot-test@main`)와 `GODOT_GITHUB_TOKEN`. 비어 있으면 `npm run init`을 다시 실행해 입력하세요.
+
+```bash
+cd ~/godot-web-editor/mcp-server/headless && npm ci
+```
+
+```bash
+npx playwright install --with-deps chromium
+```
+
+Chromium과 실행에 필요한 시스템 패키지를 설치합니다(sudo 비밀번호를 물을 수 있음, 수백 MB).
+
+```bash
+~/godot-web-editor/mcp-server/deploy/install-headless-service.sh
+```
+
+```bash
+journalctl -u godot-headless-editor -f
+```
+
+"에디터 준비 완료"가 보이면 Claude에서 `list_projects`를 호출했을 때 `kind: "headless"` 탭이 나옵니다.
+
+| 작업 | 명령 |
+|---|---|
+| 상태 / 로그 | `systemctl status godot-headless-editor` / `journalctl -u godot-headless-editor -f` |
+| 끄기 / 켜기 | `sudo systemctl stop godot-headless-editor` / `sudo systemctl start godot-headless-editor` |
+| 부팅 시 자동 시작 끄기 | `sudo systemctl disable godot-headless-editor` |
+| 업데이트 후 | `cd ~/godot-web-editor/mcp-server/headless && npm ci && sudo systemctl restart godot-headless-editor` |
+| PC 에디터에 양보하지 않기 | `.env`에 `HEADLESS_YIELD_TO_BROWSER=0` (권장하지 않음) |
+| 다시 켜기까지 대기 시간 | `.env`에 `HEADLESS_RESUME_AFTER_SEC=60` |
+
 ## 보안 메모
 
 - 서버는 `127.0.0.1`에서만 열리고, 외부 접속은 Tailscale Funnel을 통해서만 들어옵니다.
