@@ -21,6 +21,8 @@ import { EditorLink } from './editor-link.js';
 import { GitHubBackend } from './github-backend.js';
 import { log, warn } from './log.js';
 import { mcpHandler } from './mcp.js';
+import { PaperspaceClient } from './paperspace.js';
+import { PowerManager } from './power.js';
 import { ToolRouter } from './tools.js';
 
 const VERSION = JSON.parse(readFileSync(join(ROOT, 'package.json'), 'utf8')).version;
@@ -83,7 +85,19 @@ export function createRelay(config) {
   });
   const link = new EditorLink({ pairingToken: config.pairingToken, allowedOrigins: config.allowedOrigins });
   const github = config.githubToken ? new GitHubBackend({ token: config.githubToken, apiBase: config.githubApiBase }) : null;
-  const router = new ToolRouter({ link, github, defaultProject: config.defaultProject });
+  const paperspace =
+    config.paperspaceApiKey && config.paperspaceMachineId
+      ? new PaperspaceClient({ apiKey: config.paperspaceApiKey, machineId: config.paperspaceMachineId, apiBase: config.paperspaceApiBase })
+      : null;
+  const power = new PowerManager({
+    dataDir: config.dataDir,
+    paperspace,
+    link,
+    defaults: { autoStop: config.autoStopIdleMinutes > 0, idleMinutes: config.autoStopIdleMinutes || 120 },
+    log,
+    ...(config.powerOverrides ?? {}),
+  });
+  const router = new ToolRouter({ link, github, defaultProject: config.defaultProject, power });
 
   const app = express();
   app.disable('x-powered-by');
@@ -114,7 +128,21 @@ export function createRelay(config) {
   app.all('/mcp', bearer, express.json({ limit: '50mb' }), mcpHandler(router, VERSION));
   // 연결된 에디터 탭 목록 (헤드리스 에디터 실행기가 PC 에디터 연결 여부를 확인할 때 사용)
   app.get('/api/tabs', bearer, (_req, res) => res.json({ tabs: link.summary() }));
+  // 서버 전원 (GitHub Actions 워크플로 등에서 사용)
+  app.get('/api/power', bearer, async (_req, res) => res.json(await power.status()));
+  app.post('/api/power', bearer, express.json(), async (req, res) => {
+    const { auto_stop: enabled, idle_minutes: idleMinutes } = req.body ?? {};
+    if (enabled !== undefined && typeof enabled !== 'boolean') return res.status(400).json({ error: 'auto_stop must be boolean' });
+    power.setAutoStop({ enabled, idleMinutes });
+    res.json(await power.status());
+  });
+  app.post('/api/power/stop', bearer, (_req, res) => {
+    if (!power.paperspace) return res.status(409).json({ error: 'Paperspace API key or machine id is not configured' });
+    res.status(202).json({ stopping: true });
+    setTimeout(() => power.stopNow('원격 요청').catch(() => {}), 200);
+  });
 
+  power.start(config.powerCheckMs ?? 60000);
   const server = createServer(app);
   server.on('upgrade', (req, socket, head) => {
     const path = new URL(req.url, 'http://x').pathname;
@@ -128,9 +156,11 @@ export function createRelay(config) {
     link,
     provider,
     router,
+    power,
     listen: (port = config.port, host = config.host) => new Promise((resolve) => server.listen(port, host, () => resolve(server.address()))),
     close: () =>
       new Promise((resolve) => {
+        power.stop();
         link.close();
         server.close(() => resolve());
         server.closeAllConnections?.();
@@ -147,6 +177,10 @@ async function main() {
   log(`공개 주소: ${config.publicUrl}  (MCP: ${config.publicUrl}/mcp)`);
   log(`에디터 페이지 허용 Origin: ${config.allowedOrigins.join(', ')}`);
   if (config.editorPageUrl) log(`웹 에디터 페이지 전달: /app/ -> ${config.editorPageUrl}`);
+  const ps = await relay.power.status();
+  log(
+    `서버 전원: Paperspace ${ps.paperspace_configured ? `연결됨 (기계 ${ps.machine_id})` : '설정 안 됨'}, 자동 종료 ${ps.auto_stop ? `켜짐 (${ps.idle_minutes}분)` : '꺼짐'}`,
+  );
   log(config.githubToken ? `GitHub 대체 처리: 사용 (기본 프로젝트 ${config.defaultProject?.key ?? '없음'})` : 'GitHub 대체 처리: 사용 안 함');
   const stop = async () => {
     log('종료 중...');
