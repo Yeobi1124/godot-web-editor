@@ -115,7 +115,7 @@ Claude 앱 ──MCP(Streamable HTTP)──▶ 중계 서버 ◀──WebSocket�
 | 서버 → 페이지 | `{ type: 'call', id, name, arguments }` |
 | 페이지 → 서버 | `{ type: 'result', id, ...toMcpContent(result) }` 또는 `{ type: 'result', id, isError: true, content: [{ type: 'text', text }] }` |
 
-서버는 받은 `tools`를 그대로 `tools/list`에 노출하고, `tools/call`을 해당 탭으로 전달한다.
+서버는 받은 `tools`를 그대로 `tools/list`에 노출하고, `tools/call`을 해당 탭으로 전달한다. 자세한 설계는 [MCP.md](MCP.md).
 인증: 브라우저 ↔ 서버는 페어링 토큰, Claude Code ↔ 서버는 Bearer 헤더, claude.ai/앱 ↔ 서버는 OAuth.
 
 ## 보안
