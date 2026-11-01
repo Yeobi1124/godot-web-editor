@@ -1,0 +1,13 @@
+{
+  "name": "godot-web-editor",
+  "version": "0.1.0",
+  "private": true,
+  "description": "GitHub 저장소와 자동 동기화되는 브라우저용 Godot 에디터 (AI 연동 준비)",
+  "type": "module",
+  "scripts": {
+    "build": "scripts/build.sh",
+    "serve": "node tools/serve.mjs 8060 dist",
+    "test": "scripts/build.sh && node tests/e2e.mjs"
+  },
+  "license": "MIT"
+}
