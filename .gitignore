@@ -4,3 +4,6 @@ node_modules/
 test-results/
 mcp-server/.env
 mcp-server/data/
+dist-worker/
+worker/node_modules/
+worker/.wrangler/

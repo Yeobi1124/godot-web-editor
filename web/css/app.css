@@ -18,6 +18,13 @@ button { background: var(--panel-2); border: 1px solid var(--border); border-rad
 button:hover:not(:disabled) { border-color: var(--accent); }
 button:disabled { opacity: .5; cursor: default; }
 button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+a.button { display: inline-block; text-align: center; text-decoration: none; border: 1px solid var(--border); border-radius: 4px; padding: 6px 10px; color: var(--text); background: var(--panel-2); }
+a.button.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.repo-list { border: 1px solid var(--border); border-radius: 4px; margin: 0; padding: 4px; max-height: 260px; overflow-y: auto; }
+.repo-item { display: flex; gap: 8px; align-items: center; padding: 5px 6px; border-radius: 4px; cursor: pointer; }
+.repo-item:hover { background: var(--panel-2); }
+.repo-item .muted { margin: 0 0 0 auto; font-size: 11px; }
+#picker-install { color: var(--accent); }
 button.danger { border-color: var(--error); color: #ffb3b3; }
 input[type="text"], input[type="password"], input[type="search"], textarea { background: #1a1f29; border: 1px solid var(--border); border-radius: 4px; padding: 5px 8px; width: 100%; }
 code, pre, textarea { font-family: ui-monospace, "SF Mono", Menlo, Consolas, monospace; font-size: 12px; }

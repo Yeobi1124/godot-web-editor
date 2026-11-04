@@ -91,3 +91,92 @@ export function askSettings(initial = {}, errorText = '') {
     };
   });
 }
+
+/** 클라우드 모드 로그인 화면. 버튼은 /auth/login으로 이동하므로 이 함수는 끝나지 않는다 */
+export function askLogin(errorText = '') {
+  setLoading(null);
+  const dlg = $('#login');
+  $('#login-error').textContent = errorText;
+  $('#login-error').hidden = !errorText;
+  dlg.addEventListener('cancel', (e) => e.preventDefault());
+  if (!dlg.open) dlg.showModal();
+  return new Promise(() => {});
+}
+
+/**
+ * 클라우드 모드 프로젝트 선택 화면.
+ * repos: [{ owner, name, full_name, default_branch, private, can_push }]
+ * 선택하면 { owner, repo, branch }. onRefresh()는 새 { repos } 를, onLogout()은 로그아웃을 처리한다.
+ */
+export function askProject({ user, repos, installUrl, last = {}, error = '', onRefresh, onLogout }) {
+  setLoading(null);
+  const dlg = $('#picker');
+  const form = $('#picker-form');
+  $('#picker-user').textContent = user ? `${user.name || user.login} (@${user.login})` : '';
+  const install = $('#picker-install');
+  install.hidden = !installUrl;
+  if (installUrl) install.href = installUrl;
+  const showError = (text) => {
+    $('#picker-error').textContent = text;
+    $('#picker-error').hidden = !text;
+  };
+  showError(error);
+
+  const render = (list) => {
+    const box = $('#picker-list');
+    box.replaceChildren(
+      ...list.map((r) => {
+        const label = document.createElement('label');
+        label.className = 'repo-item';
+        const input = document.createElement('input');
+        Object.assign(input, { type: 'radio', name: 'repo', value: r.full_name });
+        input.dataset.branch = r.default_branch;
+        input.disabled = !r.can_push;
+        input.addEventListener('change', () => {
+          form.branch.value = r.full_name === `${last.owner}/${last.repo}` && last.branch ? last.branch : r.default_branch;
+        });
+        const name = document.createElement('span');
+        name.textContent = r.full_name;
+        const meta = document.createElement('span');
+        meta.className = 'muted';
+        meta.textContent = [r.private ? '비공개' : '공개', r.can_push ? '' : '읽기 전용'].filter(Boolean).join(' · ');
+        label.append(input, name, meta);
+        return label;
+      }),
+    );
+    $('#picker-empty').hidden = list.length > 0;
+    const pick = list.find((r) => r.full_name === `${last.owner}/${last.repo}` && r.can_push) ?? list.find((r) => r.can_push);
+    const input = pick && [...box.querySelectorAll('input')].find((i) => i.value === pick.full_name);
+    if (input) {
+      input.checked = true;
+      input.dispatchEvent(new Event('change'));
+    } else form.branch.value = '';
+    $('#picker-open').disabled = !pick;
+  };
+  render(repos);
+
+  $('#picker-refresh').onclick = async () => {
+    showError('');
+    try {
+      render((await onRefresh()).repos);
+    } catch (e) {
+      showError(e.message);
+    }
+  };
+  $('#picker-logout').onclick = () => onLogout();
+  dlg.addEventListener('cancel', (e) => e.preventDefault());
+  if (!dlg.open) dlg.showModal();
+  return new Promise((resolve) => {
+    form.onsubmit = (e) => {
+      e.preventDefault();
+      const checked = form.querySelector('input[name="repo"]:checked');
+      if (!checked) {
+        showError('저장소를 고르세요.');
+        return;
+      }
+      const [owner, repo] = checked.value.split('/');
+      dlg.close();
+      resolve({ owner, repo, branch: form.branch.value.trim() || checked.dataset.branch || 'main' });
+    };
+  });
+}

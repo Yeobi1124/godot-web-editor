@@ -125,9 +125,39 @@ JavaScript를 실행할 수 없다면 오른쪽 "AI 패널"의 파일 탭(경로
     </form>
   </dialog>
 
+  <dialog id="login" aria-labelledby="login-title">
+    <div class="stack">
+      <h2 id="login-title">Godot Web Editor</h2>
+      <p class="muted">GitHub 계정으로 로그인하면 저장소의 Godot 프로젝트를 브라우저에서 바로 편집하고, 변경은 자동으로 커밋됩니다. GitHub 토큰은 서버에만 보관되고 이 브라우저에는 저장되지 않습니다.</p>
+      <p id="login-error" class="error" role="alert" hidden></p>
+      <a id="login-go" class="button primary" href="/auth/login">GitHub로 로그인</a>
+    </div>
+  </dialog>
+
+  <dialog id="picker" aria-labelledby="picker-title">
+    <form id="picker-form" method="dialog">
+      <h2 id="picker-title">프로젝트 열기</h2>
+      <p id="picker-user" class="muted"></p>
+      <fieldset class="repo-list" aria-label="저장소 목록">
+        <div id="picker-list"></div>
+      </fieldset>
+      <p id="picker-empty" class="muted" hidden>이 앱이 접근할 수 있는 저장소가 없습니다. 아래 링크에서 앱에 저장소를 추가한 뒤 목록을 새로고침하세요.</p>
+      <a id="picker-install" target="_blank" rel="noopener" hidden>GitHub에서 앱에 저장소 추가/변경</a>
+      <label for="picker-branch">브랜치</label>
+      <input id="picker-branch" name="branch" type="text" autocomplete="off" spellcheck="false">
+      <p id="picker-error" class="error" role="alert" hidden></p>
+      <div class="row">
+        <button id="picker-open" type="submit" class="primary">열기</button>
+        <button id="picker-refresh" type="button">목록 새로고침</button>
+        <span class="spacer"></span>
+        <button id="picker-logout" type="button">로그아웃</button>
+      </div>
+    </form>
+  </dialog>
+
   <dialog id="settings" aria-labelledby="settings-title">
     <h2 id="settings-title">설정</h2>
-    <section class="stack" aria-labelledby="mcp-title">
+    <section id="mcp-section" class="stack" aria-labelledby="mcp-title">
       <h3 id="mcp-title">MCP 서버 (Claude 앱 연결)</h3>
       <p class="muted">godot-mcp-relay 서버에 연결하면 Claude 앱과 Claude Code가 이 에디터를 사용할 수 있습니다. 값은 이 브라우저에만 저장됩니다.</p>
       <label for="mcp-url">서버 주소</label>
@@ -140,7 +170,7 @@ JavaScript를 실행할 수 없다면 오른쪽 "AI 패널"의 파일 탭(경로
         <button id="mcp-clear" type="button">연결 해제</button>
       </div>
     </section>
-    <hr>
+    <hr id="mcp-section-rule">
     <div class="stack">
       <button id="btn-change-repo" type="button">다른 저장소 연결</button>
       <button id="btn-logout" type="button">로그아웃 (이 브라우저에서 토큰 삭제)</button>

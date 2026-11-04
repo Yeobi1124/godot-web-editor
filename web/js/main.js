@@ -1,5 +1,5 @@
 // 앱 시작 순서:
-//  1. 저장소/토큰 확인 (없으면 설정 화면)
+//  1. 저장소/토큰 확인 (없으면 설정 화면). 클라우드 모드(Worker)는 GitHub 로그인 → 프로젝트 선택
 //  2. GitHub와 브라우저 저장소 동기화 (에디터 시작 전, IndexedDB에 직접 반영) + 브리지 애드온 설치
 //  3. Godot 에디터 시작 -> 브리지 애드온 연결
 //  4. 자동 저장/원격 확인 시작, AI 진입점(window.godotAI, WebMCP, AI 패널) 준비
@@ -17,7 +17,7 @@ import { ProjectAPI } from './project-api.js';
 import { loadBundledBridge, planScaffold } from './scaffold.js';
 import { clearToken, devOptions, loadMcpSettings, loadSettings, loadToken, projectDirFor, saveMcpSettings, saveSettings, saveToken } from './settings.js';
 import { SyncEngine } from './sync.js';
-import { askSettings, renderStatus, setLoading, showFatal, toast } from './ui.js';
+import { askLogin, askProject, askSettings, renderStatus, setLoading, showFatal, toast } from './ui.js';
 
 const $ = (sel) => document.querySelector(sel);
 const logs = new LogBuffer();
@@ -86,7 +86,80 @@ async function connect(dev) {
   }
 }
 
-function bindToolbar({ api, sync, panel }) {
+const PICK_KEY = 'gwe:pick-project';
+
+async function getJson(path) {
+  const res = await fetch(path, { cache: 'no-store', headers: { Accept: 'application/json' } });
+  if (res.status === 401) return { unauthorized: true };
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) throw new Error(data.error || `${path}: ${res.status}`);
+  return data;
+}
+
+async function cloudLogout() {
+  await fetch('/auth/logout', { method: 'POST', headers: { 'X-GWE': '1' } }).catch(() => {});
+  location.reload();
+}
+
+/**
+ * 클라우드 모드: 같은 주소의 Worker에 로그인하고 프로젝트를 고른다.
+ * GitHub 토큰은 브라우저에 없고, GitHubClient는 /gh 로 요청한다(Worker가 세션 토큰을 붙임).
+ */
+async function connectCloud({ onLoggedIn } = {}) {
+  let error = '';
+  let forcePick = sessionStorage.getItem(PICK_KEY) === '1';
+  sessionStorage.removeItem(PICK_KEY);
+  let expiredShown = false;
+  const onUnauthorized = () => {
+    if (expiredShown) return;
+    expiredShown = true;
+    askLogin('로그인이 만료되었습니다. 다시 로그인하세요. 아직 올라가지 않은 변경은 이 브라우저에 남아 있다가 다시 로그인하면 올라갑니다.');
+  };
+  for (;;) {
+    setLoading('로그인 확인 중…');
+    const me = await getJson('/api/me');
+    if (me.unauthorized) return askLogin();
+    onLoggedIn?.();
+    setLoading('저장소 목록을 가져오는 중…');
+    const list = await getJson('/api/repos');
+    if (list.unauthorized) return askLogin();
+    const last = loadSettings();
+    const known = list.repos.find((r) => r.full_name === `${last.owner}/${last.repo}`);
+    const settings =
+      !error && !forcePick && known
+        ? { owner: last.owner, repo: last.repo, branch: last.branch || known.default_branch }
+        : await askProject({
+            user: me.user,
+            repos: list.repos,
+            installUrl: list.install_url,
+            last,
+            error,
+            onRefresh: () => getJson('/api/repos'),
+            onLogout: cloudLogout,
+          });
+    forcePick = false;
+    setLoading('GitHub 저장소 확인 중…');
+    const gh = new GitHubClient({ owner: settings.owner, repo: settings.repo, apiBase: '/gh', onUnauthorized });
+    try {
+      const repo = await gh.getRepo();
+      if (repo.permissions && !repo.permissions.push) {
+        error = `${settings.owner}/${settings.repo}에 쓸 권한이 없습니다.`;
+        continue;
+      }
+      saveSettings({ ...settings, remember: true });
+      return { gh, settings };
+    } catch (e) {
+      if (e instanceof GitHubError && e.status === 401) return askLogin();
+      if (e instanceof GitHubError && (e.status === 403 || e.status === 404)) {
+        error = `${settings.owner}/${settings.repo}을(를) 열 수 없습니다 (${e.status}). 앱에 이 저장소가 추가되어 있는지 확인하세요.`;
+        continue;
+      }
+      throw e;
+    }
+  }
+}
+
+function bindToolbar({ api, sync, panel, cloud }) {
   $('#btn-save').addEventListener('click', async () => {
     try {
       const r = await api.call('sync_now');
@@ -107,11 +180,13 @@ function bindToolbar({ api, sync, panel }) {
   $('#btn-settings').addEventListener('click', () => $('#settings').showModal());
   $('#btn-logout').addEventListener('click', () => {
     if (sync.status.pending.length && !confirm(`아직 GitHub에 올라가지 않은 파일이 ${sync.status.pending.length}개 있습니다. 그래도 로그아웃할까요?\n(파일은 이 브라우저에 남아 있어 다시 로그인하면 올라갑니다)`)) return;
+    if (cloud) return cloudLogout();
     clearToken();
     location.reload();
   });
   $('#btn-change-repo').addEventListener('click', () => {
-    clearToken();
+    if (cloud) sessionStorage.setItem(PICK_KEY, '1');
+    else clearToken();
     location.reload();
   });
   $('#btn-reset-local').addEventListener('click', async () => {
@@ -190,9 +265,19 @@ async function main() {
   }
   const build = await loadBuildInfo();
   const dev = devOptions();
-  Engine.load('godot.editor'); // 엔진(wasm) 다운로드를 미리 시작
+  // 엔진(wasm) 다운로드를 미리 시작. 크기를 알려 주면 서버가 압축 전송(Content-Length 없음)해도 진행률이 보인다.
+  // 클라우드 모드는 로그인 확인 뒤에 시작한다 (로그인 화면에서 GitHub로 이동하면 100MB 다운로드가 버려지므로)
+  const preloadEngine = () => Engine.load('godot.editor', build.wasmSize || 0);
+  const cloud = build.mode === 'cloud';
+  if (!cloud) preloadEngine();
+  if (cloud) {
+    // 클라우드 모드: MCP 연결은 같은 서버가 맡으므로(다음 단계) 수동 설정 칸을 숨긴다
+    $('#mcp-section').hidden = true;
+    $('#mcp-section-rule').hidden = true;
+    $('#btn-logout').textContent = '로그아웃';
+  }
 
-  const { gh, settings } = await connect(dev);
+  const { gh, settings } = cloud ? await connectCloud({ onLoggedIn: preloadEngine }) : await connect(dev);
   const projectDir = projectDirFor(settings.owner, settings.repo, settings.branch);
   if (!(await acquireTabLock(projectDir))) {
     showFatal('이미 다른 탭에서 이 프로젝트를 열었습니다', '같은 프로젝트를 여러 탭에서 동시에 열면 파일이 서로 덮어써집니다. 다른 탭을 닫고 새로고침하세요.');
@@ -245,8 +330,8 @@ async function main() {
   installGodotAI(api);
   registerWebMCP(api, logs);
   const panel = new AIPanel({ root: $('#ai-panel'), api, logs, toast });
-  bindToolbar({ api, sync, panel });
-  app.mcp = setupMcp({ api, sync, bridge, info: api.info });
+  bindToolbar({ api, sync, panel, cloud });
+  if (!cloud) app.mcp = setupMcp({ api, sync, bridge, info: api.info });
 
   sync.start({ autosaveSec: dev.autosaveSec ?? 30, pollSec: dev.pollSec ?? 30, statusSec: dev.statusSec ?? 10 });
   window.addEventListener('beforeunload', (e) => {

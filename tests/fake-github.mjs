@@ -14,6 +14,69 @@ export class FakeGitHub {
     this.refs = new Map();
     this.requests = [];
     this.counter = 0;
+    this.oauth = null;
+  }
+
+  /**
+   * GitHub App 사용자 로그인(OAuth) 흉내. 켜면 /login/oauth/*, /user, /user/installations*를 제공하고,
+   * 발급한 사용자 토큰(만료 시각 있음)도 API 인증에 쓸 수 있다. refresh 토큰은 한 번만 쓸 수 있다.
+   */
+  enableOAuth({ clientId = 'test-client', clientSecret = 'test-secret', tokenTtlSec = 28800, user = { id: 42, login: this.owner, name: 'Test User' } } = {}) {
+    this.oauth = { clientId, clientSecret, tokenTtlSec, user, codes: new Map(), access: new Map(), refresh: new Set(), issued: 0, refreshed: 0, authorizeQueries: [] };
+    return this.oauth;
+  }
+
+  /** 발급한 사용자 토큰을 모두 만료시킨다 (갱신 테스트용) */
+  expireUserTokens() {
+    for (const k of this.oauth.access.keys()) this.oauth.access.set(k, 0);
+  }
+
+  #issueTokens() {
+    const o = this.oauth;
+    const n = ++o.issued;
+    const access = `ghu_user_${n}`;
+    const refresh = `ghr_refresh_${n}`;
+    o.access.set(access, Date.now() + o.tokenTtlSec * 1000);
+    o.refresh.add(refresh);
+    return { access_token: access, expires_in: o.tokenTtlSec, refresh_token: refresh, refresh_token_expires_in: 15897600, token_type: 'bearer', scope: '' };
+  }
+
+  #authorized(header) {
+    if (header === `Bearer ${this.token}`) return true;
+    const t = header?.startsWith('Bearer ') ? header.slice(7) : null;
+    const exp = t && this.oauth?.access.get(t);
+    return !!exp && exp > Date.now();
+  }
+
+  async #handleOAuth(req, url, send, res) {
+    const o = this.oauth;
+    if (url.pathname === '/login/oauth/authorize') {
+      o.authorizeQueries.push(Object.fromEntries(url.searchParams));
+      if (url.searchParams.get('client_id') !== o.clientId) return send(400, { error: 'bad client_id' });
+      const code = `code_${o.codes.size + 1}_${Math.random().toString(36).slice(2, 8)}`;
+      o.codes.set(code, url.searchParams.get('redirect_uri'));
+      const to = new URL(url.searchParams.get('redirect_uri'));
+      to.searchParams.set('code', code);
+      to.searchParams.set('state', url.searchParams.get('state') ?? '');
+      res.writeHead(302, { Location: to.href });
+      res.end();
+      return true;
+    }
+    if (url.pathname === '/login/oauth/access_token' && req.method === 'POST') {
+      const chunks = [];
+      for await (const c of req) chunks.push(c);
+      const body = JSON.parse(Buffer.concat(chunks).toString('utf8') || '{}');
+      if (body.client_id !== o.clientId || body.client_secret !== o.clientSecret) return send(200, { error: 'incorrect_client_credentials' });
+      if (body.grant_type === 'refresh_token') {
+        if (!o.refresh.delete(body.refresh_token)) return send(200, { error: 'bad_refresh_token' });
+        o.refreshed++;
+        return send(200, this.#issueTokens());
+      }
+      if (!o.codes.has(body.code)) return send(200, { error: 'bad_verification_code' });
+      o.codes.delete(body.code);
+      return send(200, this.#issueTokens());
+    }
+    return false;
   }
 
   putBlob(buf) {
@@ -90,8 +153,26 @@ export class FakeGitHub {
       res.end(body === undefined ? '' : JSON.stringify(body));
     };
     if (req.method === 'OPTIONS') return send(204);
-    if (req.headers.authorization !== `Bearer ${this.token}`) return send(401, { message: 'Bad credentials' });
     const url = new URL(req.url, 'http://x');
+    if (this.oauth && url.pathname.startsWith('/login/oauth/')) {
+      if ((await this.#handleOAuth(req, url, send, res)) !== false) return undefined;
+    }
+    if (!this.#authorized(req.headers.authorization)) return send(401, { message: 'Bad credentials' });
+    this.lastAuthorization = req.headers.authorization;
+    if (this.oauth && req.method === 'GET') {
+      const repoJson = () => ({
+        full_name: `${this.owner}/${this.repo}`,
+        name: this.repo,
+        owner: { login: this.owner },
+        default_branch: this.branch,
+        private: true,
+        permissions: { push: true, pull: true },
+        pushed_at: '2026-11-01T00:00:00Z',
+      });
+      if (url.pathname === '/user') return send(200, { ...this.oauth.user, avatar_url: 'https://example.invalid/a.png' });
+      if (url.pathname === '/user/installations') return send(200, { total_count: 1, installations: [{ id: 7, account: { login: this.owner } }] });
+      if (url.pathname === '/user/installations/7/repositories') return send(200, { total_count: 1, repositories: [repoJson()] });
+    }
     let body = null;
     if (req.method !== 'GET') {
       const chunks = [];
