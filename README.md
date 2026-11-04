@@ -4,23 +4,21 @@
 공식 Godot 웹 에디터를 그대로 쓰고, 프로젝트는 **GitHub 저장소에 자동으로 동기화**됩니다.
 Claude 같은 AI가 프로젝트를 읽고 고칠 수 있도록 도구 API도 함께 제공합니다.
 
-- 에디터 페이지: GitHub Pages (이 저장소, 공개)
+- 에디터 주소: **https://godotweb.solitary-cloud-8e56.workers.dev** (Cloudflare Worker)
 - 게임 프로젝트: 별도의 GitHub 저장소 (비공개 가능)
-- GitHub 토큰: **내 브라우저에만** 저장, GitHub API 외에는 전송하지 않음
-
-> **클라우드 버전 (Cloudflare Worker):** 토큰 대신 **"GitHub로 로그인"** 만으로 쓰는 버전도 있습니다.
-> 에디터 페이지와 GitHub 연동을 Worker 한 곳에서 제공하고, GitHub 토큰은 브라우저에 남지 않습니다.
-> 설정 방법: [docs/CLOUD-SETUP.md](docs/CLOUD-SETUP.md)
+- 로그인: **"GitHub로 로그인"** 한 번. GitHub 토큰은 Worker에만 보관되고 브라우저에는 남지 않습니다.
+- 서비스 설정(Cloudflare, GitHub App): [docs/CLOUD-SETUP.md](docs/CLOUD-SETUP.md)
 
 ## 사용법
 
-1. 데스크톱용 **Chrome 또는 Edge**로 에디터 페이지를 엽니다. 첫 방문에는 페이지가 한 번 자동으로 새로고침됩니다.
-2. 게임 저장소(예: `Yeobi1124/godot-test`), 브랜치, GitHub 토큰을 입력합니다.
-   - [토큰 만들기](https://github.com/settings/personal-access-tokens/new): **Only select repositories**로 게임 저장소만 고르고,
-     **Repository permissions → Contents: Read and write**를 줍니다. 만료 기간을 꼭 정하세요.
-3. 에디터가 열리면 평소처럼 작업하고 `Ctrl+S`로 저장합니다. **약 30초마다 자동으로 GitHub에 커밋**됩니다.
+1. 데스크톱용 **Chrome 또는 Edge**로 에디터 주소를 엽니다.
+2. **GitHub로 로그인**을 누르고, 처음이면 앱을 내 계정에 설치하면서 쓸 저장소를 고릅니다.
+3. 프로젝트 목록에서 게임 저장소(예: `Yeobi1124/godot-test`)를 고릅니다. 마지막에 연 프로젝트는 다음부터 바로 열립니다.
+   - 목록에 없는 저장소는 선택 화면의 **GitHub에서 앱에 저장소 추가/변경** 링크로 추가합니다.
+   - 다른 프로젝트로 바꾸려면 **설정 → 다른 저장소 연결**을 누릅니다.
+4. 에디터가 열리면 평소처럼 작업하고 `Ctrl+S`로 저장합니다. **약 30초마다 자동으로 GitHub에 커밋**됩니다(작성자는 본인).
    바로 올리려면 상단의 **지금 저장**을 누르세요.
-4. 다른 곳(Claude Code, Codespaces, 다른 PC)에서 저장소에 커밋하면 **약 30초 안에 열려 있는 에디터에 반영**됩니다.
+5. 다른 곳(Claude Code, Codespaces, 다른 PC)에서 저장소에 커밋하면 **약 30초 안에 열려 있는 에디터에 반영**됩니다.
    바로 받으려면 **원격 확인**을 누르세요.
 
 상단 표시줄의 상태: `동기화됨 · 커밋` / `저장 대기 N개` / `받는 중…` / `오류`. 초록 점은 에디터 브리지 연결 상태입니다.
@@ -40,7 +38,7 @@ Claude 같은 AI가 프로젝트를 읽고 고칠 수 있도록 도구 API도 �
 | **Claude in Chrome 등 브라우저 AI** | 페이지가 `window.godotAI` API를 제공합니다. **AI 패널 → AI 연결** 탭의 안내문을 복사해 AI에게 주세요. |
 | **JS 실행 없이 클릭만 하는 AI** | **AI 패널 → 파일** 탭(경로·내용 입력란, 파일 저장 버튼)을 쓰면 됩니다. |
 | **WebMCP** | 브라우저가 `navigator.modelContext`를 지원하면 같은 도구를 자동으로 등록합니다. (실험적 표준) |
-| **MCP 서버** (claude.ai·모바일·Claude Code) | 내 Ubuntu 컴퓨터에 `mcp-server/`를 설치하고 에디터 설정에서 연결합니다. 에디터를 닫아 두어도 파일 작업은 GitHub로 처리됩니다. [설치 안내](docs/MCP-SETUP.md) · [설계](docs/MCP.md) |
+| **MCP** (claude.ai·모바일·Claude Code) | **준비 중**: Worker로 옮기는 작업(다음 단계)이 끝나면 커넥터 주소 추가 + GitHub 로그인만으로 연결됩니다. 예전 방식(`mcp-server/` 중계 서버)은 GitHub Pages 에디터에 의존해서 지금은 동작하지 않습니다. |
 
 ```js
 godotAI.help()                                   // 사용법
@@ -62,25 +60,28 @@ await godotAI.run(); await godotAI.logs({ level: 'error' }); await godotAI.stop(
 - 같은 프로젝트를 **여러 탭에서 동시에 열 수 없습니다** (파일이 서로 덮어써지는 것을 막기 위해).
 - 탭을 닫아도 아직 올라가지 않은 변경은 브라우저에 남아 있다가, 다음에 열 때 올라갑니다.
 - 파일 하나가 100MB를 넘으면 GitHub에 올릴 수 없습니다.
-- 공용 PC에서는 연결할 때 "이 브라우저에 기억"을 끄거나, 끝난 뒤 **설정 → 로그아웃**을 누르세요.
+- 공용 PC에서는 작업이 끝난 뒤 **설정 → 로그아웃**을 누르세요.
 
 ## 개발
 
 ```bash
-scripts/build.sh               # 공식 Godot 웹 에디터(체크섬 고정)를 받아 web/과 합쳐 dist/ 생성
-node tools/serve.mjs 8060 dist # COOP/COEP 헤더를 붙여 로컬 서빙 → http://localhost:8060
-node tests/e2e.mjs             # 가짜 GitHub API + 헤드리스 Chromium으로 전체 흐름 검증 (playwright 필요)
-(cd mcp-server && npm ci && npm test)   # MCP 중계 서버 통합 테스트
-node tests/e2e-mcp.mjs         # MCP 클라이언트 -> 중계 서버 -> 실제 웹 에디터 E2E
-scripts/build-worker.sh        # 클라우드 버전 dist-worker/ 생성 (엔진 조각, 헤더, mode=cloud)
-(cd worker && npm ci && npm test)   # 클라우드 Worker 통합 테스트 (wrangler dev + 가짜 GitHub OAuth)
-node tests/e2e-cloud.mjs       # 클라우드 버전 E2E: 로그인 → 에디터 → 자동 커밋 → 토큰 갱신 → 로그아웃
+scripts/build-worker.sh        # dist-worker/ 생성: 공식 Godot 웹 에디터(체크섬 고정) + web/ + 엔진 조각, 헤더, mode=cloud
+(cd worker && npm ci && npm test)   # Worker 통합 테스트 (wrangler dev + 가짜 GitHub OAuth)
+node tests/e2e-cloud.mjs       # 브라우저 E2E: 로그인 → 에디터 → 자동 커밋 → 토큰 갱신 → 로그아웃 (playwright 필요)
 ```
 
-`main` 브랜치에 푸시하면 GitHub Actions가 빌드해서 GitHub Pages에 배포합니다
-(저장소 **Settings → Pages → Source: GitHub Actions** 필요).
+`main`에 푸시하면 GitHub Actions(**클라우드 Worker** 워크플로)가 테스트 후 Cloudflare에 배포합니다.
+
+예전 방식(토큰 입력, GitHub Pages, MCP 중계 서버)의 코드와 테스트는 MCP를 Worker로 옮긴 뒤 정리할 예정이라 아직 남아 있습니다.
+
+```bash
+scripts/build.sh               # dist/ (토큰 입력 방식) — node tools/serve.mjs 8060 dist 로 로컬 확인
+node tests/e2e.mjs             # 토큰 입력 방식 E2E
+(cd mcp-server && npm ci && npm test)   # MCP 중계 서버 통합 테스트
+node tests/e2e-mcp.mjs         # MCP 클라이언트 -> 중계 서버 -> 실제 웹 에디터 E2E
+```
 
 Godot 버전을 바꾸려면 `scripts/build.sh`의 `GODOT_VERSION`과 `GODOT_ZIP_SHA256`을 함께 고치고 E2E 테스트를 돌리세요.
 에디터 내부 동작(파일 시스템 형식, 엔진 API)에 의존하는 부분이 있어 버전마다 확인이 필요합니다.
 
-구조와 동기화 알고리즘, 브리지 프로토콜, MCP 연동 계획은 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)에 있습니다.
+구조와 동기화 알고리즘, 브리지 프로토콜은 [docs/ARCHITECTURE.md](docs/ARCHITECTURE.md)에 있습니다.

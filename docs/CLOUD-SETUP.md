@@ -6,7 +6,7 @@
 
 > 이번 단계 범위: 웹 에디터, 로그인, GitHub 동기화.
 > 다음 단계에서 붙일 것: MCP(Claude 연결), 실시간 중계, Godot 실행기(Render).
-> 기존 GitHub Pages 버전과 MCP 중계 서버는 그대로 동작한다.
+> GitHub Pages 배포는 내렸다. 예전 MCP 중계 서버는 Pages 에디터에 의존해서 지금은 동작하지 않는다(MCP 단계에서 대체).
 
 ## 구조
 ```

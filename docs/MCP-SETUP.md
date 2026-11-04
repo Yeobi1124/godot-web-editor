@@ -1,5 +1,8 @@
 # MCP 서버 설치 (Ubuntu + Tailscale Funnel)
 
+> **지금은 쓰지 않는 방식입니다.** 이 중계 서버는 GitHub Pages 에디터에 의존하는데, Pages 배포를 내렸습니다.
+> MCP는 Cloudflare Worker로 옮길 예정입니다 ([docs/CLOUD-SETUP.md](CLOUD-SETUP.md)).
+
 Claude 앱(claude.ai·데스크톱·모바일)과 Claude Code에서 웹 에디터를 쓰기 위한 중계 서버 `godot-mcp-relay` 설치 방법입니다.
 도메인 없이 **Tailscale Funnel**로 고정 HTTPS 주소를 받습니다. 공유기 포트를 열 필요가 없습니다.
 
