@@ -88,3 +88,20 @@ export async function exchangeToken(env, params) {
     refreshExpiresAt: data.refresh_token_expires_in ? now + data.refresh_token_expires_in * 1000 : null,
   };
 }
+
+export async function sha256Hex(text) {
+  const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(text)));
+  return Array.from(digest, (b) => b.toString(16).padStart(2, '0')).join('');
+}
+
+const b64url = (bytes) => btoa(String.fromCharCode(...bytes)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+
+/** 서버 비밀값으로 만든 HMAC 서명 (동적 클라이언트 등록의 client_id를 저장 없이 검증하기 위함) */
+export async function hmac(env, purpose, text) {
+  const key = await crypto.subtle.importKey('raw', new TextEncoder().encode(`${env.GITHUB_CLIENT_SECRET}:${purpose}`), { name: 'HMAC', hash: 'SHA-256' }, false, ['sign']);
+  return b64url(new Uint8Array(await crypto.subtle.sign('HMAC', key, new TextEncoder().encode(text))));
+}
+
+export function escapeHtml(s) {
+  return String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
+}

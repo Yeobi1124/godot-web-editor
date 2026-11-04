@@ -4,8 +4,8 @@
 - 토큰 붙여 넣기, 서버 주소 입력이 없다.
 - GitHub 토큰은 Worker에만 보관되고 브라우저에는 저장되지 않는다.
 
-> 이번 단계 범위: 웹 에디터, 로그인, GitHub 동기화.
-> 다음 단계에서 붙일 것: MCP(Claude 연결), 실시간 중계, Godot 실행기(Render).
+> 포함된 것: 웹 에디터, GitHub 로그인, GitHub 동기화, **MCP(Claude 연결)**와 열린 에디터 실시간 조종.
+> 아직 없는 것: Godot 실행기(테스트 실행, 게임 화면 캡처).
 > GitHub Pages 배포는 내렸다. 예전 MCP 중계 서버는 Pages 에디터에 의존해서 지금은 동작하지 않는다(MCP 단계에서 대체).
 
 ## 구조
@@ -16,8 +16,19 @@
   /auth/*            GitHub App 사용자 로그인 (OAuth)
   /api/me, /api/repos 로그인 사용자, 앱이 설치된 저장소 목록
   /gh/*              GitHub API 대리 호출 (에디터가 쓰는 경로만 허용, 사용자 토큰을 붙임)
-Session Durable Object  사용자 토큰 보관, 만료 전 자동 갱신
+  /mcp               MCP 엔드포인트 (Claude가 호출)
+  /oauth/*, /.well-known/oauth-*  Claude 연결용 로그인 (OAuth 2.1, 동적 등록, PKCE) → GitHub 로그인
+  /live              웹 에디터 탭의 WebSocket (로그인 쿠키)
+Session Durable Object  사용자 토큰 보관, 만료 전 자동 갱신 (브라우저 로그인 1개, Claude 연결 1개마다)
+Hub Durable Object      사용자별. 열린 에디터 탭을 들고 Claude의 도구 호출을 전달
 ```
+
+Claude의 도구 호출은 이렇게 처리된다.
+1. 그 사용자의 웹 에디터 탭이 열려 있으면 탭으로 보낸다. 변경이 에디터에 바로 보이고, 에디터 자동 저장이 커밋한다.
+2. 탭이 없으면(휴대폰 등) 파일 도구는 GitHub에 바로 커밋한다.
+3. 스크린샷, 게임 실행처럼 에디터가 꼭 필요한 도구는 "에디터를 여세요"라고 안내한다.
+
+어느 경우든 커밋 작성자는 로그인한 사용자 본인이다.
 
 - 커밋 작성자는 로그인한 사용자 본인이다.
 - 저장소 접근 범위는 "사용자의 권한 ∩ 앱이 설치된 저장소"이고, GitHub가 직접 검사한다.
@@ -80,12 +91,29 @@ godot-web-editor → Settings → Secrets and variables → Actions
 3. 프로젝트를 고른다. 마지막에 연 프로젝트는 다음부터 바로 열린다.
 4. 다른 프로젝트로 바꾸려면 설정 → **다른 저장소 연결**을 누른다.
 
+## Claude 연결 (MCP)
+서버 쪽 추가 설정은 없다. GitHub App의 Callback URL(`/auth/callback`)을 그대로 쓴다.
+
+**claude.ai (웹, 데스크톱, 휴대폰 앱)**
+1. claude.ai → 설정 → **커넥터** → **커스텀 커넥터 추가**
+2. 주소: `https://godotweb.<하위도메인>.workers.dev/mcp`
+3. **연결**을 누르면 승인 화면이 나온다. **허용** → GitHub 로그인(이미 로그인했으면 바로 넘어감) → 연결 완료.
+4. 대화에서 "godot-test에 ... 만들어 줘"처럼 요청한다. 대상 프로젝트는 열린 에디터, 없으면 마지막으로 연 프로젝트다. `project` 인자나 `list_projects`로 바꿀 수 있다.
+
+**Claude Code**
+```bash
+claude mcp add --transport http godot https://godotweb.<하위도메인>.workers.dev/mcp
+```
+그다음 Claude Code에서 `/mcp` → godot → 인증을 고르면 브라우저에서 같은 승인 화면이 열린다.
+
+연결은 30일 동안 쓰지 않으면 만료된다(쓰는 동안은 자동 갱신). 만료되거나 GitHub 로그인이 끝나면 커넥터를 다시 연결한다.
+
 ## 로컬 개발과 테스트
 ```bash
 scripts/build-worker.sh           # dist-worker/ 빌드 (Godot 웹 에디터 zip은 .cache/에 보관)
 cd worker && npm ci
-npm test                          # Worker 통합 테스트: wrangler dev + 가짜 GitHub(OAuth 포함)
-cd .. && node tests/e2e-cloud.mjs # 브라우저 e2e: 로그인 → 에디터 → 자동 커밋 → 토큰 갱신 → 로그아웃
+npm test                          # Worker 통합 테스트: wrangler dev + 가짜 GitHub(OAuth 포함), MCP 인가·도구·탭 중계
+cd .. && node tests/e2e-cloud.mjs # 브라우저 e2e: 로그인 → 에디터 → 자동 커밋 → 토큰 갱신 → MCP로 에디터 조종 → 로그아웃
 ```
 
 `wrangler dev`를 직접 띄울 때는 아래처럼 실행한다.
@@ -102,9 +130,14 @@ GitHub App의 Callback URL에 `http://localhost:8787/auth/callback`도 추가해
 | 프로젝트 목록이 비어 있음 | 앱을 설치했는지, 그 저장소를 선택했는지. 링크로 추가한 뒤 "목록 새로고침" |
 | 저장 중 "로그인이 만료되었습니다" | 다시 로그인한다. 올라가지 않은 변경은 브라우저에 남아 있다가 로그인 후 올라간다 |
 | 에디터가 "내려받는 중"에서 멈춤 | 강력 새로고침(Ctrl+Shift+R). 엔진 캐시(service worker)를 다시 받는다 |
+| Claude가 "웹 에디터가 열려 있어야" 라고 함 | 그 도구(스크린샷, 실행 등)는 브라우저에 에디터가 열려 있어야 한다. 상단의 MCP 배지가 초록(연결됨)인지 확인 |
+| Claude 연결이 갑자기 안 됨 | claude.ai 커넥터 설정에서 연결 해제 후 다시 연결 |
 
 ## 보안 메모
 - 세션 쿠키: `__Host-` 접두사, `HttpOnly; Secure; SameSite=Lax`. 페이지 자바스크립트에서 읽을 수 없다.
 - `/gh/*`는 Git Data API 일부와 빈 저장소의 첫 파일 쓰기만 허용한다. 저장소 설정 변경, 브랜치 삭제, 다른 API는 403이다.
 - 상태를 바꾸는 요청에는 `X-GWE: 1` 헤더와 같은 Origin이 필요하다 (CSRF 방지).
+- Claude에게 주는 토큰은 이 서버가 발급한 것(1시간 접근 토큰 + 30일 리프레시 토큰, 회전)이고, GitHub 토큰은 넘기지 않는다. 서버에는 해시만 저장한다.
+- 동적 클라이언트 등록은 Claude 콜백(`claude.ai`, `claude.com`)과 로컬 루프백 주소만 허용한다. client_id는 서버 비밀값으로 서명해서 따로 저장하지 않는다.
+- Claude의 도구 호출은 **같은 GitHub 사용자**의 에디터 탭에만 전달된다.
 - refresh 토큰은 한 번만 쓸 수 있다. 갱신은 세션 Durable Object 안에서 한 번에 하나만 일어나서, 동시 요청이 와도 토큰을 잃지 않는다.

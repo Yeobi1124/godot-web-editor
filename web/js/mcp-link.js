@@ -12,6 +12,7 @@ export class McpLink extends EventTarget {
   #timer = null;
   #stopped = true;
   #stateTimer = null;
+  #pingTimer = null;
   status = 'off'; // off | connecting | connected | rejected
   detail = '';
   recent = [];
@@ -26,9 +27,14 @@ export class McpLink extends EventTarget {
     document.addEventListener('visibilitychange', pushState);
   }
 
-  configure({ url, token } = {}) {
+  /**
+   * url: 서버 주소, token: 페어링 토큰.
+   * path: WebSocket 경로 (중계 서버 '/editor', 클라우드 Worker '/live' — 같은 주소라 로그인 쿠키로 인증)
+   */
+  configure({ url, token, path = '/editor' } = {}) {
     this.url = url || '';
     this.token = token || '';
+    this.path = path;
     this.stop();
     if (this.url && this.token) {
       this.#stopped = false;
@@ -40,6 +46,7 @@ export class McpLink extends EventTarget {
   stop() {
     this.#stopped = true;
     clearTimeout(this.#timer);
+    clearInterval(this.#pingTimer);
     if (this.#ws) {
       this.#ws.onclose = null;
       this.#ws.close();
@@ -56,7 +63,7 @@ export class McpLink extends EventTarget {
   #wsUrl() {
     const u = new URL(this.url);
     u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
-    u.pathname = `${u.pathname.replace(/\/$/, '')}/editor`;
+    u.pathname = `${u.pathname.replace(/\/$/, '')}${this.path || '/editor'}`;
     u.search = '';
     u.hash = '';
     return u.href;
@@ -98,6 +105,9 @@ export class McpLink extends EventTarget {
       }
       if (msg.type === 'welcome') {
         this.#retry = 0;
+        // 연결 유지 확인 (서버가 자동으로 pong 응답)
+        clearInterval(this.#pingTimer);
+        this.#pingTimer = setInterval(() => this.#send({ type: 'ping' }), 30000);
         this.#set('connected', '연결됨');
         this.logs.info('MCP 서버에 연결했습니다. Claude가 이 에디터를 사용할 수 있습니다.');
         this.#sendState();
@@ -113,6 +123,7 @@ export class McpLink extends EventTarget {
     };
     ws.onclose = () => {
       this.#ws = null;
+      clearInterval(this.#pingTimer);
       if (this.#stopped || rejected) return;
       const delay = Math.min(30000, 1000 * 2 ** this.#retry++);
       this.#set('connecting', `연결이 끊겼습니다. ${Math.round(delay / 1000)}초 뒤 다시 연결합니다`);

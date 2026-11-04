@@ -35,9 +35,19 @@ function loginError(message) {
   return new Response(html, { status: 400, headers: { 'Content-Type': 'text/html; charset=utf-8', 'Cache-Control': 'no-store' } });
 }
 
+export const appConfigured = (env) => !!(env.GITHUB_CLIENT_ID && env.GITHUB_CLIENT_SECRET);
+const NOT_CONFIGURED = '서버에 GitHub App 설정(GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET)이 없습니다. docs/CLOUD-SETUP.md를 확인하세요.';
+
 export function login(req, env) {
-  if (!env.GITHUB_CLIENT_ID || !env.GITHUB_CLIENT_SECRET) return loginError('서버에 GitHub App 설정(GITHUB_CLIENT_ID, GITHUB_CLIENT_SECRET)이 없습니다. docs/CLOUD-SETUP.md를 확인하세요.');
-  const state = randomToken(24);
+  if (!appConfigured(env)) return loginError(NOT_CONFIGURED);
+  return githubAuthorize(req, env, randomToken(24));
+}
+
+/**
+ * GitHub 승인 화면으로 보낸다. state는 쿠키에도 넣어 콜백에서 같은 브라우저인지 확인한다.
+ * MCP 인가 흐름은 state가 "m.<세션id>.<무작위>" 형태 (oauth.js)
+ */
+export function githubAuthorize(req, env, state) {
   const url = new URL(`${env.GITHUB_WEB_BASE.replace(/\/$/, '')}/login/oauth/authorize`);
   url.searchParams.set('client_id', env.GITHUB_CLIENT_ID);
   url.searchParams.set('redirect_uri', redirectUri(req));
@@ -64,6 +74,18 @@ export async function callback(req, env) {
   if (!res.ok) return loginError(`GitHub 사용자 정보를 읽지 못했습니다 (${res.status}).`);
   const u = await res.json();
   const user = { id: u.id, login: u.login, name: u.name || u.login, avatar_url: u.avatar_url };
+
+  if (state.startsWith('m.')) {
+    // MCP 연결(claude.ai 커넥터 등) 승인: 이 브라우저의 로그인 세션은 만들지 않고, MCP 클라이언트에 인가 코드를 돌려준다
+    const sid = state.split('.')[1];
+    const codeSecret = randomToken(32);
+    const done = await sessionFor(env, sid)?.completeMcp({ user, tokens, codeSecret });
+    if (!done) return loginError('연결 요청이 만료되었습니다. Claude에서 연결을 다시 시도하세요.');
+    const to = new URL(done.redirectUri);
+    to.searchParams.set('code', `${sid}.${codeSecret}`);
+    if (done.state) to.searchParams.set('state', done.state);
+    return redirect(to.href, [clearCookie(STATE_COOKIE)]);
+  }
 
   const sid = randomToken(32);
   const expiresAt = await sessionFor(env, sid).start({ user, tokens });
