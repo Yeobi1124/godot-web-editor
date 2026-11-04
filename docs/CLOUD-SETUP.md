@@ -37,7 +37,7 @@ Settings → Secrets and variables → Actions → **Secrets**
 - `CLOUDFLARE_ACCOUNT_ID`
 
 이 상태로 Actions → **클라우드 Worker** → Run workflow(main)를 실행하면 첫 배포가 된다.
-- 주소: `https://godot-web-editor.<하위도메인>.workers.dev`
+- 주소: `https://godotweb.<하위도메인>.workers.dev` (Worker 이름은 `worker/wrangler.toml`의 `name`)
 - 아직 로그인은 되지 않는다. 다음 단계에서 GitHub App을 만들면 된다.
 
 ### 3. GitHub App 만들기
@@ -55,10 +55,11 @@ GitHub → Settings → Developer settings → GitHub Apps → **New GitHub App*
 | Repository permissions → Metadata | Read-only (자동) |
 | Where can this GitHub App be installed? | Only on this account (나만 쓸 때) |
 
-만든 뒤 앱 화면에서 두 가지를 확인한다.
+만든 뒤 앱 화면에서 아래를 확인한다.
+- 위쪽에 "You must generate a private key in order to install your GitHub App" 띠가 보이면 **Generate a private key**로 비공개 키(.pem)를 먼저 만든다.
+  이 키가 있어야 앱을 설치할 수 있다. 내려받은 파일은 안전하게 보관한다(이번 단계에서는 쓰지 않음, MCP 단계에서 사용).
 - **Client ID**를 복사한다.
 - **Generate a new client secret**을 눌러 비밀값을 만든다. 한 번만 보이므로 바로 복사한다.
-- 비공개 키(private key)는 이번 단계에서 필요 없다.
 
 ### 4. 앱 값 넣고 다시 배포
 godot-web-editor → Settings → Secrets and variables → Actions

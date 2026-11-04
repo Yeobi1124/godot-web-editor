@@ -1,6 +1,6 @@
 # Godot 웹 에디터 클라우드 버전 (Cloudflare Worker)
 # 처음 설정과 배포 방법: docs/CLOUD-SETUP.md
-name = "godot-web-editor"
+name = "godotweb"
 main = "src/index.js"
 compatibility_date = "2026-06-01"
 
