@@ -141,6 +141,11 @@ describe('클라우드 Worker', () => {
     assert.equal(authorize.searchParams.get('redirect_uri'), `${base}/auth/callback`);
     const forged = await b.fetch(`/auth/callback?code=x&state=forged`);
     assert.equal(forged.status, 400);
+    // 앱 설치 직후의 콜백(state 없음): code를 쓰지 않고 정상 로그인을 다시 시작
+    const install = await new Browser().fetch('/auth/callback?code=x&installation_id=1&setup_action=install');
+    assert.equal(install.status, 302);
+    assert.equal(install.headers.get('Location'), '/auth/login');
+    assert.equal(install.headers.getSetCookie().length, 0, '세션을 만들지 않음');
     const other = new Browser(); // state 쿠키가 없는 다른 브라우저로 콜백
     const r2 = await b.fetch(r1.headers.get('Location'));
     assert.equal((await other.fetch(r2.headers.get('Location'))).status, 400);

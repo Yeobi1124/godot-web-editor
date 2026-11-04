@@ -49,7 +49,12 @@ export async function callback(req, env) {
   const url = new URL(req.url);
   const state = getCookie(req, STATE_COOKIE);
   if (url.searchParams.get('error')) return loginError(`GitHub가 로그인을 거부했습니다: ${url.searchParams.get('error_description') || url.searchParams.get('error')}`);
-  if (!state || state !== url.searchParams.get('state')) return loginError('로그인 요청이 만료되었거나 올바르지 않습니다. 다시 시도하세요.');
+  if (!state || state !== url.searchParams.get('state')) {
+    // 앱 설치 직후 GitHub가 바로 보내는 경우(setup_action=install)는 우리 state가 없다.
+    // 그 code는 쓰지 않고(로그인 위조 방지) 정상 로그인을 다시 시작한다. 이미 승인했으므로 GitHub가 바로 돌려보낸다.
+    if (url.searchParams.has('setup_action') || url.searchParams.has('installation_id')) return redirect('/auth/login');
+    return loginError('로그인 요청이 만료되었거나 올바르지 않습니다. 다시 시도하세요.');
+  }
   const code = url.searchParams.get('code');
   if (!code) return loginError('GitHub가 인증 코드를 보내지 않았습니다.');
 
