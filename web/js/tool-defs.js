@@ -139,6 +139,33 @@ export const TOOL_DEFS = [
     needsEditor: true,
   },
   {
+    name: 'run_tests',
+    title: '테스트 실행',
+    description:
+      'tests/test_*.gd 파일의 test_ 로 시작하는 함수를 실행하고 통과/실패 목록을 돌려준다. 테스트 함수는 assert 도우미 t를 인자로 받는다 ' +
+      '(func test_x(t): t.ok(조건, "설명"); t.eq(실제, 기대, "설명")). 테스트 중 스크립트 오류도 실패로 친다. ' +
+      '웹 에디터가 열려 있으면 브라우저에서 바로(몇 초), 없으면 GitHub Actions에서(1~2분) 실행한다. ' +
+      'Actions가 시간 안에 끝나지 않으면 status: running과 request_id를 돌려주니, 잠시 뒤 같은 도구를 request_id로 다시 호출하라.',
+    inputSchema: {
+      properties: {
+        filter: { type: 'string', description: '파일 이름에 이 문자열이 들어간 테스트만 (생략하면 전체)' },
+        request_id: { type: 'string', description: '이전 호출이 돌려준 request_id (GitHub Actions 결과 이어 받기)' },
+      },
+    },
+    annotations: READ_ONLY,
+    needsEditor: false,
+  },
+  {
+    name: 'check_scripts',
+    title: '스크립트 오류 검사',
+    description:
+      '프로젝트의 모든 GDScript(.gd, addons/ 제외)를 다시 읽어 파싱 오류를 파일·줄 단위로 돌려준다. 코드를 고친 뒤 확인용으로 쓴다. ' +
+      '웹 에디터가 열려 있으면 브라우저에서, 없으면 GitHub Actions에서 실행한다 (request_id는 run_tests와 같다).',
+    inputSchema: { properties: { request_id: { type: 'string', description: '이전 호출이 돌려준 request_id' } } },
+    annotations: READ_ONLY,
+    needsEditor: false,
+  },
+  {
     name: 'sync_now',
     title: '지금 저장',
     description: '열린 씬을 저장하고, 아직 올라가지 않은 변경을 즉시 GitHub에 커밋한다. 자동 저장을 기다리지 않을 때 쓴다.',

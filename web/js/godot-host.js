@@ -70,12 +70,12 @@ export class GodotHost extends EventTarget {
       canvasResizePolicy: 1,
       onPrint: (...a) => this.logs.push('game', 'info', a.join(' ')),
       onPrintError: (...a) => this.logs.push('game', 'error', a.join(' ')),
-      onExit: () => {
+      onExit: (code) => {
         this.gameCanvas = this.#replaceCanvas(this.gameCanvas);
         this.gameLayer.hidden = true;
         this.game = null;
         this.editorCanvas.focus();
-        this.dispatchEvent(new Event('game-exit'));
+        this.dispatchEvent(new CustomEvent('game-exit', { detail: { code } }));
       },
     };
   }
@@ -144,5 +144,36 @@ export class GodotHost extends EventTarget {
 
   stopGame() {
     if (this.game) this.game.requestQuit();
+  }
+
+  /** 게임 종료를 기다린다 (ms 안에 끝나면 true) */
+  waitGameExit(ms) {
+    if (!this.game) return Promise.resolve(true);
+    return new Promise((resolve) => {
+      const timer = setTimeout(() => {
+        this.removeEventListener('game-exit', done);
+        resolve(false);
+      }, ms);
+      const done = () => {
+        clearTimeout(timer);
+        resolve(true);
+      };
+      this.addEventListener('game-exit', done, { once: true });
+    });
+  }
+
+  /** 종료 요청에 응답하지 않는 게임 인스턴스를 버리고 다음 실행이 가능하게 한다 */
+  discardGame() {
+    if (!this.game) return;
+    try {
+      this.game.requestQuit();
+    } catch {
+      /* 이미 멈춤 */
+    }
+    this.gameCanvas = this.#replaceCanvas(this.gameCanvas);
+    this.gameLayer.hidden = true;
+    this.game = null;
+    this.logs.error('게임이 종료 요청에 응답하지 않아 정리했습니다.');
+    this.dispatchEvent(new CustomEvent('game-exit', { detail: { code: null, discarded: true } }));
   }
 }

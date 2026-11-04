@@ -18,6 +18,8 @@ import { sessionFor } from './session.js';
 const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 const SERVER_INFO = { name: 'godot-web-editor', title: 'Godot Web Editor', version: '0.2.0' };
 const SLOW_TOOLS = new Set(['screenshot', 'run_project', 'write_files', 'sync_now', 'pull_remote']);
+const RUNNER_TOOLS = new Set(['run_tests', 'check_scripts']);
+const toolTimeout = (name) => (RUNNER_TOOLS.has(name) ? 150000 : SLOW_TOOLS.has(name) ? 60000 : 30000);
 const USER_AGENT = 'godot-web-editor-worker';
 
 const instructions = (origin) => `Godot 4 웹 에디터 프로젝트(GitHub 저장소와 동기화됨)를 다루는 도구입니다.
@@ -105,7 +107,7 @@ async function callTool(env, origin, { user, session }, name, rawArgs) {
     project.branch = repo.default_branch || 'main';
   }
 
-  const viaTab = await hub.callTool(project ? keyOf(project) : null, name, args, SLOW_TOOLS.has(name) ? 60000 : 30000);
+  const viaTab = args.request_id && RUNNER_TOOLS.has(name) ? { handled: false } : await hub.callTool(project ? keyOf(project) : null, name, args, toolTimeout(name));
   if (viaTab.handled) return viaTab.result;
 
   const target = project ?? (viaTab.defaultProject ? parseProject(viaTab.defaultProject) : null);

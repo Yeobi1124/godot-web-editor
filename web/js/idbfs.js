@@ -114,3 +114,17 @@ export async function deleteTree(dir) {
     db.close();
   }
 }
+
+/** 파일 하나 읽기 (절대 경로). 없으면 null. 에디터가 쓴 내용이 IndexedDB까지 저장됐는지 확인할 때 쓴다 */
+export async function readFile(absPath) {
+  const db = await openDb();
+  try {
+    return await new Promise((resolve, reject) => {
+      const req = db.transaction(STORE, 'readonly').objectStore(STORE).get(absPath);
+      req.onsuccess = () => resolve(req.result?.contents ?? null);
+      req.onerror = () => reject(req.error);
+    });
+  } finally {
+    db.close();
+  }
+}

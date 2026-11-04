@@ -217,7 +217,36 @@ try {
   const calls = await ai(() => document.querySelectorAll('#mcp-calls li').length);
   check('AI 패널에 MCP 호출 기록', calls >= 3, `${calls}건`);
 
-  // 7. 로그아웃 → 다시 로그인 화면
+  // 7. 테스트 실행과 스크립트 검사 (브라우저 안의 Godot)
+  const runnerInstalled = await waitFor(() => gh.text('addons/web_editor_bridge/runner/gwe_runner.gd'), 30000);
+  check('실행기 스크립트가 브리지 애드온과 함께 설치됨', !!runnerInstalled);
+  await mcpCall(token, 'write_files', {
+    files: [
+      { path: 'tests/test_demo.gd', content: 'extends RefCounted\n\nfunc test_pass(t):\n\tt.eq(1 + 1, 2, "덧셈")\n\nfunc test_fail(t):\n\tt.ok(false, "일부러 실패")\n' },
+    ],
+  });
+  const rt = await mcpCall(token, 'run_tests');
+  check(
+    'MCP run_tests → 통과 1, 실패 1 (브라우저)',
+    rt.data?.where === 'browser' && rt.data?.total === 2 && rt.data?.passed === 1 && rt.data?.failures?.[0]?.message === '일부러 실패',
+    JSON.stringify(rt.data ?? rt).slice(0, 240),
+  );
+  const filtered = await mcpCall(token, 'run_tests', { filter: 'nothing_matches' });
+  check('filter로 대상 줄이기', filtered.data?.total === 0, JSON.stringify(filtered.data ?? filtered).slice(0, 160));
+  const cs1 = await mcpCall(token, 'check_scripts');
+  check('MCP check_scripts → 오류 없음', cs1.data?.ok === true && cs1.data?.files >= 1, JSON.stringify(cs1.data ?? cs1).slice(0, 200));
+  await mcpCall(token, 'write_files', { files: [{ path: 'broken.gd', content: 'extends Node\nfunc _ready(:\n\tpass\n' }] });
+  const cs2 = await mcpCall(token, 'check_scripts');
+  check(
+    'MCP check_scripts → 문법 오류 파일·줄 보고',
+    cs2.data?.ok === false && cs2.data?.errors?.some((e) => e.path === 'res://broken.gd' && e.line === 2),
+    JSON.stringify(cs2.data ?? cs2).slice(0, 240),
+  );
+  const afterRun = await mcpCall(token, 'get_editor_state');
+  check('실행 후 게임이 종료됨', afterRun.data?.playing === false, JSON.stringify(afterRun.data ?? afterRun).slice(0, 120));
+  await mcpCall(token, 'delete_files', { paths: ['broken.gd', 'tests/test_demo.gd'] });
+
+  // 8. 로그아웃 → 다시 로그인 화면
   await page.click('#btn-settings');
   await page.click('#btn-logout');
   await page.waitForSelector('#login[open]', { timeout: 60000 });

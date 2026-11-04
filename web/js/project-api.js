@@ -57,6 +57,69 @@ export class ProjectAPI extends EventTarget {
     if (!this.bridge.ready) throw new ToolError('에디터가 아직 준비되지 않았습니다. 에디터 로딩이 끝난 뒤 다시 시도하세요.');
   }
 
+  /**
+   * 테스트/스크립트 검사 씬(브리지 애드온의 runner/)을 이 브라우저의 Godot으로 실행하고 결과를 기다린다.
+   * 결과는 게임 출력의 "GWE_RESULT {json}" 줄. 게임이 결과 없이 끝나거나 시간이 지나면 출력 끝부분을 돌려준다.
+   */
+  async #runRunner(mode, filter) {
+    this.#requireBridge();
+    await this.#ensureGameStopped();
+    const since = this.logs.query({ limit: 1 }).at(-1)?.seq ?? 0;
+    const TIMEOUT_MS = 120000;
+    const done = new Promise((resolve) => {
+      let timer = null;
+      const finish = (value) => {
+        clearTimeout(timer);
+        this.logs.removeEventListener('line', onLine);
+        this.host.removeEventListener('game-exit', onExit);
+        resolve(value);
+      };
+      const onLine = (e) => {
+        const { source, text } = e.detail;
+        if (source === 'game' && text.startsWith('GWE_RESULT ')) {
+          try {
+            finish({ result: JSON.parse(text.slice('GWE_RESULT '.length)) });
+          } catch {
+            finish({ error: '결과 JSON을 읽지 못했습니다' });
+          }
+        }
+      };
+      // 결과 줄보다 종료가 먼저 오는 경우를 위해 잠깐 기다린 뒤 마무리
+      const onExit = (e) => setTimeout(() => finish({ exitCode: e.detail?.code ?? null, error: '결과를 출력하기 전에 실행이 끝났습니다' }), 1500);
+      timer = setTimeout(() => finish({ error: `시간 초과(${TIMEOUT_MS / 1000}초)` }), TIMEOUT_MS);
+      this.logs.addEventListener('line', onLine);
+      this.host.addEventListener('game-exit', onExit);
+    });
+    // 1) 설정 쓰기 + 씬 저장 → 2) 에디터가 IndexedDB에 저장할 때까지 기다림 → 3) 실행
+    // (게임은 IndexedDB에서 파일을 읽는다. 방금 쓴 파일이 아직 저장되지 않았으면 예전 내용으로 실행된다)
+    const nonce = Math.random().toString(36).slice(2);
+    await this.bridge.call('prepare_runner', { mode, filter, nonce }, 30000);
+    const cfgPath = `${this.info.projectDir}/.godot/gwe_runner.json`;
+    for (let i = 0; i < 100; i++) {
+      const bytes = await idb.readFile(cfgPath).catch(() => null);
+      if (bytes && utf8Decode(bytes).includes(nonce)) break;
+      await new Promise((res) => setTimeout(res, 100));
+    }
+    await this.bridge.call('play_runner', {}, 30000);
+    const r = await done;
+    // 실행기 씬은 결과를 찍고 스스로 끝난다. 끝나지 않았으면 정리해서 다음 실행을 막지 않게 한다
+    if (!(await this.host.waitGameExit(5000))) await this.#ensureGameStopped();
+    await this.bridge.call('stop').catch(() => {}); // 에디터의 "실행 중" 표시도 정리
+    const output = this.logs
+      .query({ since, limit: 0 })
+      .filter((l) => l.source === 'game' && !l.text.startsWith('GWE_RESULT '))
+      .map((l) => `${l.level === 'error' ? '[ERROR] ' : ''}${l.text}`);
+    if (r.result) return { ...r.result, where: 'browser', output_tail: output.slice(-40) };
+    return { ok: false, mode, where: 'browser', error: r.error, exit_code: r.exitCode ?? null, output_tail: output.slice(-80) };
+  }
+
+  async #ensureGameStopped() {
+    if (!this.host.game) return;
+    await this.bridge.call('stop').catch(() => {});
+    this.host.stopGame();
+    if (!(await this.host.waitGameExit(4000))) this.host.discardGame();
+  }
+
   #on(name, handler) {
     this.#handlers.set(name, handler);
   }
@@ -174,6 +237,12 @@ export class ProjectAPI extends EventTarget {
       const lines = this.logs.query({ since: since ?? 0, level: level ?? null, limit: limit ?? 200 });
       return { lines: lines.map((l) => `[${l.source}${l.level === 'error' ? ' ERROR' : ''}] ${l.text}`), last_seq: lines.at(-1)?.seq ?? since ?? 0 };
     });
+
+    this.#on('run_tests', async ({ filter, request_id }) => {
+      if (request_id) throw new ToolError('request_id는 GitHub Actions 실행 결과용입니다. 웹 에디터가 열려 있으면 request_id 없이 다시 호출하세요.');
+      return this.#runRunner('test', filter ?? '');
+    });
+    this.#on('check_scripts', async () => this.#runRunner('check', ''));
 
     this.#on('sync_now', async ({ message }) => {
       if (this.bridge.ready) await this.bridge.call('save_all').catch(() => {});
