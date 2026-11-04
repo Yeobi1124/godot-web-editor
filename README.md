@@ -50,7 +50,8 @@ await godotAI.run(); await godotAI.logs({ level: 'error' }); await godotAI.stop(
 ```
 
 도구 목록: `get_status`, `list_files`, `read_file`, `write_files`, `delete_files`, `get_editor_state`,
-`open_scene`, `set_main_screen`, `screenshot`, `run_project`, `stop_project`, `get_logs`, `sync_now`, `pull_remote`
+`open_scene`, `set_main_screen`, `screenshot`, `run_project`, `stop_project`, `get_logs`, `run_tests`, `check_scripts`, `sync_now`, `pull_remote`
+(`run_tests`/`check_scripts`는 에디터가 열려 있으면 브라우저에서, 없으면 GitHub Actions에서 실행: [테스트 실행기](docs/CLOUD-SETUP.md#테스트-실행기-run_tests-check_scripts))
 
 ## 알아둘 점
 

@@ -2,7 +2,7 @@
 import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
-import { createHash, randomBytes } from 'node:crypto';
+import { createHash, generateKeyPairSync, randomBytes } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -18,6 +18,8 @@ let wrangler;
 let base;
 let tmp;
 let wasm;
+let app;
+let appKeyPem;
 
 /** 쿠키를 기억하는 아주 작은 클라이언트 (리다이렉트는 직접 따라감) */
 class Browser {
@@ -67,6 +69,10 @@ async function waitReady(url, ms = 60000) {
 before(async () => {
   gh = new FakeGitHub({ owner: 'tester', repo: 'game' });
   oauth = gh.enableOAuth({ clientId: 'cid', clientSecret: 'csecret' });
+  // GitHub App 비공개 키: GitHub처럼 PKCS#1 PEM으로 (Worker가 PKCS#8로 바꿔 읽는지 확인)
+  const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
+  appKeyPem = privateKey.export({ type: 'pkcs1', format: 'pem' });
+  app = gh.enableApp({ appId: '123', publicKeyPem: publicKey.export({ type: 'spki', format: 'pem' }), runnerRepo: 'tester/runner' });
   gh.commit({ 'project.godot': 'config_version=5\n', 'main.gd': 'extends Node\n' }, 'init');
   await gh.listen(0);
   const ghBase = `http://127.0.0.1:${gh.server.address().port}`;
@@ -87,7 +93,18 @@ before(async () => {
 
   const port = 18700 + Math.floor(Math.random() * 200);
   base = `http://localhost:${port}`;
-  const vars = { GITHUB_CLIENT_ID: 'cid', GITHUB_CLIENT_SECRET: 'csecret', GITHUB_APP_SLUG: 'gwe-test', GITHUB_API_BASE: ghBase, GITHUB_WEB_BASE: ghBase };
+  const vars = {
+    GITHUB_CLIENT_ID: 'cid',
+    GITHUB_CLIENT_SECRET: 'csecret',
+    GITHUB_APP_SLUG: 'gwe-test',
+    GITHUB_API_BASE: ghBase,
+    GITHUB_WEB_BASE: ghBase,
+    GITHUB_APP_ID: '123',
+    GITHUB_APP_PRIVATE_KEY: appKeyPem.replace(/\n/g, '\\n'),
+    RUNNER_REPO: 'tester/runner',
+    RUNNER_WAIT_MS: '4000',
+    RUNNER_POLL_MS: '300',
+  };
   wrangler = spawn(
     join(WORKER, 'node_modules/.bin/wrangler'),
     ['dev', '--port', String(port), '--ip', '127.0.0.1', '--assets', assets, '--persist-to', join(tmp, 'state'), '--show-interactive-dev-session=false', '--inspector-port', '0',
@@ -474,3 +491,59 @@ async function mcpConnectWithWrongVerifier(b) {
   if (tok.error === 'invalid_grant') throw new Error('rejected as expected');
   return tok;
 }
+
+describe('테스트 실행기 (GitHub Actions / 브라우저)', () => {
+  test('탭이 없으면 Actions: 앱 토큰(실행기 저장소만, actions:write)으로 실행, 결과 읽기', async () => {
+    const { access_token } = await mcpConnect();
+    const before = app.issued.length;
+    app.onDispatch = (run) => setTimeout(() => run.complete({ ok: true, mode: 'test', passed: 2, total: 2, failures: [] }), 500);
+    const r = await call(access_token, 'run_tests', { project: 'tester/game@main', filter: 'chess' });
+    assert.ok(!r.isError, r.text);
+    assert.equal(r.data.where, 'github-actions');
+    assert.equal(r.data.passed, 2);
+    assert.equal(r.data.commit, gh.head());
+    assert.equal(r.data.project, 'tester/game@main');
+    const d = app.dispatches.at(-1);
+    assert.deepEqual({ repo: d.inputs.repo, sha: d.inputs.sha, mode: d.inputs.mode, filter: d.inputs.filter, ref: d.ref }, { repo: 'tester/game', sha: gh.head(), mode: 'test', filter: 'chess', ref: 'main' });
+    const issued = app.issued.slice(before);
+    assert.ok(issued.length >= 1);
+    assert.deepEqual(issued[0].repositories, ['runner'], '실행기 저장소 하나만');
+    assert.deepEqual(issued[0].permissions, { actions: 'write' });
+    assert.ok(!JSON.stringify(d.inputs).includes('ghu_'), '사용자 토큰을 Actions에 넘기지 않음');
+  });
+
+  test('오래 걸리면 request_id → 다시 호출해서 결과 받기, 잘못된 filter 거부', async () => {
+    const { access_token } = await mcpConnect();
+    let pending = null;
+    app.onDispatch = (run) => (pending = run);
+    const first = await call(access_token, 'check_scripts', { project: 'tester/game' });
+    assert.equal(first.data.status, 'running', first.text);
+    assert.ok(first.data.request_id);
+    assert.equal(app.dispatches.at(-1).inputs.mode, 'check');
+    pending.complete({ ok: false, mode: 'check', files: 3, errors: [{ path: 'res://a.gd', line: 2, message: 'Parse Error' }] });
+    const second = await call(access_token, 'check_scripts', { request_id: first.data.request_id });
+    assert.equal(second.data.status, 'completed');
+    assert.equal(second.data.errors[0].line, 2);
+    const bad = await call(access_token, 'run_tests', { project: 'tester/game', filter: '$(rm -rf /)' });
+    assert.ok(bad.isError);
+    const badId = await call(access_token, 'run_tests', { request_id: '../../x' });
+    assert.ok(badId.isError);
+  });
+
+  test('에디터 탭이 열려 있으면 브라우저로 (Actions 실행 없음)', async () => {
+    const b = new Browser();
+    await b.login();
+    const tab = await openTab(b);
+    const { access_token } = await mcpConnect();
+    const dispatchesBefore = app.dispatches.length;
+    const p = call(access_token, 'run_tests', { filter: 'x' });
+    const msg = await tab.next((m) => m.type === 'call');
+    assert.equal(msg.name, 'run_tests');
+    assert.deepEqual(msg.arguments, { filter: 'x' });
+    tab.send({ type: 'result', id: msg.id, content: [{ type: 'text', text: JSON.stringify({ ok: true, where: 'browser', passed: 1, total: 1 }) }] });
+    const r = await p;
+    assert.equal(r.data.where, 'browser');
+    assert.equal(app.dispatches.length, dispatchesBefore);
+    tab.ws.close();
+  });
+});

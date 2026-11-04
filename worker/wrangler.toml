@@ -34,4 +34,8 @@ new_sqlite_classes = ["Hub"]
 GITHUB_CLIENT_ID = ""
 GITHUB_APP_SLUG = ""
 GITHUB_API_BASE = "https://api.github.com"
+# 테스트 실행기(GitHub Actions): 앱 ID, 실행기 워크플로가 있는 저장소. 비공개 키 GITHUB_APP_PRIVATE_KEY는 비밀값
+GITHUB_APP_ID = ""
+RUNNER_REPO = ""
+RUNNER_REF = "main"
 GITHUB_WEB_BASE = "https://github.com"
