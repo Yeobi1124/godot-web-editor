@@ -1,5 +1,5 @@
 // 테스트용 가짜 GitHub API (Git Data API 일부). 메모리에만 저장한다.
-import { createHash } from 'node:crypto';
+import { createHash, createVerify } from 'node:crypto';
 import { createServer } from 'node:http';
 
 const sha1 = (data) => createHash('sha1').update(data).digest('hex');
@@ -24,6 +24,91 @@ export class FakeGitHub {
   enableOAuth({ clientId = 'test-client', clientSecret = 'test-secret', tokenTtlSec = 28800, user = { id: 42, login: this.owner, name: 'Test User' } } = {}) {
     this.oauth = { clientId, clientSecret, tokenTtlSec, user, codes: new Map(), access: new Map(), refresh: new Set(), issued: 0, refreshed: 0, authorizeQueries: [] };
     return this.oauth;
+  }
+
+  /**
+   * GitHub App(설치 토큰)과 실행기 저장소의 Actions 흉내.
+   * - 앱 JWT(RS256)를 publicKeyPem으로 검증, 설치 토큰 발급 기록(app.issued)
+   * - runnerRepo의 workflow dispatch → 실행 기록(app.runs). onDispatch(run, inputs)로 테스트가 완료 시점/결과를 정한다
+   *   (run.complete(resultObj | null) 호출)
+   */
+  enableApp({ appId = '123', publicKeyPem, runnerRepo = 'tester/runner', installationId = 7 } = {}) {
+    this.app = { appId, publicKeyPem, runnerRepo, installationId, issued: [], tokens: new Set(), runs: [], dispatches: [], onDispatch: null, nextRun: 1000 };
+    return this.app;
+  }
+
+  #verifyJwt(header) {
+    const jwt = header?.startsWith('Bearer ') ? header.slice(7) : '';
+    const [h, p, sig] = jwt.split('.');
+    if (!h || !p || !sig) return false;
+    const v = createVerify('RSA-SHA256');
+    v.update(`${h}.${p}`);
+    if (!v.verify(this.app.publicKeyPem, Buffer.from(sig, 'base64url'))) return false;
+    const claims = JSON.parse(Buffer.from(p, 'base64url').toString());
+    const now = Date.now() / 1000;
+    return String(claims.iss) === String(this.app.appId) && claims.exp > now && claims.iat <= now + 5;
+  }
+
+  async #handleApp(req, url, send, res, readBody) {
+    const a = this.app;
+    const auth = req.headers.authorization;
+    let m;
+    if (url.pathname.startsWith('/_logs/')) {
+      const run = a.runs.find((r) => `/_logs/${r.id * 10}` === url.pathname);
+      res.writeHead(run ? 200 : 404, { 'Content-Type': 'text/plain' });
+      res.end(run?.log ?? '');
+      return true;
+    }
+    if ((m = url.pathname.match(/^\/repos\/([^/]+)\/([^/]+)\/installation$/))) {
+      if (!this.#verifyJwt(auth)) return send(401, { message: 'A JSON web token could not be decoded' });
+      const full = `${m[1]}/${m[2]}`;
+      return full === a.runnerRepo || full === `${this.owner}/${this.repo}` ? send(200, { id: a.installationId }) : send(404, { message: 'Not Found' });
+    }
+    if ((m = url.pathname.match(/^\/app\/installations\/(\d+)\/access_tokens$/)) && req.method === 'POST') {
+      if (!this.#verifyJwt(auth)) return send(401, { message: 'A JSON web token could not be decoded' });
+      const body = await readBody();
+      const token = `ghs_inst_${a.issued.length + 1}`;
+      a.issued.push({ token, ...body });
+      a.tokens.add(token);
+      return send(201, { token, expires_at: new Date(Date.now() + 3600e3).toISOString(), permissions: body.permissions, repositories: body.repositories });
+    }
+    const prefix = `/repos/${a.runnerRepo}/actions`;
+    if (!url.pathname.startsWith(prefix)) return false;
+    const tok = auth?.startsWith('Bearer ') ? auth.slice(7) : '';
+    if (!a.tokens.has(tok)) return send(401, { message: 'Bad credentials' });
+    const p = url.pathname.slice(prefix.length);
+    if (p === '/workflows/godot-runner.yml/dispatches' && req.method === 'POST') {
+      const body = await readBody();
+      const id = a.nextRun++;
+      const run = {
+        id,
+        name: 'Godot 실행기',
+        display_title: `gwe ${body.inputs.request_id}`,
+        status: 'queued',
+        conclusion: null,
+        html_url: `https://github.example/${a.runnerRepo}/actions/runs/${id}`,
+        log: '',
+        complete(result) {
+          this.status = 'completed';
+          this.conclusion = result ? 'success' : 'failure';
+          this.log = `2026-11-04T00:00:00.0000000Z ##[group]Run godot\n2026-11-04T00:00:01.0000000Z   PASS x\n${result ? `2026-11-04T00:00:02.0000000Z GWE_RESULT ${JSON.stringify(result)}\n` : ''}`;
+        },
+      };
+      a.runs.unshift(run);
+      a.dispatches.push({ ref: body.ref, inputs: body.inputs, token: tok });
+      a.onDispatch?.(run, body.inputs);
+      return send(204);
+    }
+    if (p.startsWith('/workflows/godot-runner.yml/runs') && req.method === 'GET') {
+      return send(200, { total_count: a.runs.length, workflow_runs: a.runs.map(({ log, complete, ...r }) => r) });
+    }
+    if ((m = p.match(/^\/runs\/(\d+)\/jobs$/))) return send(200, { jobs: [{ id: Number(m[1]) * 10, name: 'run' }] });
+    if ((m = p.match(/^\/jobs\/(\d+)\/logs$/))) {
+      res.writeHead(302, { Location: `http://${req.headers.host}/_logs/${m[1]}` });
+      res.end();
+      return true;
+    }
+    return send(404, { message: `Not Found: ${req.method} ${p}` });
   }
 
   /** 발급한 사용자 토큰을 모두 만료시킨다 (갱신 테스트용) */
@@ -156,6 +241,15 @@ export class FakeGitHub {
     const url = new URL(req.url, 'http://x');
     if (this.oauth && url.pathname.startsWith('/login/oauth/')) {
       if ((await this.#handleOAuth(req, url, send, res)) !== false) return undefined;
+    }
+    if (this.app) {
+      const readBody = async () => {
+        const chunks = [];
+        for await (const c of req) chunks.push(c);
+        return chunks.length ? JSON.parse(Buffer.concat(chunks).toString('utf8')) : {};
+      };
+      const handled = await this.#handleApp(req, url, send, res, readBody);
+      if (handled !== false) return undefined;
     }
     if (!this.#authorized(req.headers.authorization)) return send(401, { message: 'Bad credentials' });
     this.lastAuthorization = req.headers.authorization;

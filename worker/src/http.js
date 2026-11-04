@@ -55,7 +55,7 @@ export function isSameSiteWrite(req) {
 }
 
 /** GitHub REST 호출 (Worker 안에서만 사용) */
-export function githubFetch(env, path, { token, method = 'GET', body, headers = {} } = {}) {
+export function githubFetch(env, path, { token, method = 'GET', body, headers = {}, redirect = 'follow' } = {}) {
   return fetch(env.GITHUB_API_BASE.replace(/\/$/, '') + path, {
     method,
     headers: {
@@ -66,6 +66,7 @@ export function githubFetch(env, path, { token, method = 'GET', body, headers = 
       ...headers,
     },
     body,
+    redirect,
   });
 }
 

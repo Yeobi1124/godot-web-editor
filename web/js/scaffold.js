@@ -4,7 +4,8 @@ import { utf8Decode, utf8Encode } from './util.js';
 
 export const BRIDGE_DIR = 'addons/web_editor_bridge';
 export const BRIDGE_PLUGIN_CFG = `res://${BRIDGE_DIR}/plugin.cfg`;
-const BRIDGE_FILES = ['plugin.cfg', 'plugin.gd'];
+// runner/: 테스트 실행과 스크립트 검사 (브라우저에서는 runner.tscn, GitHub Actions에서는 cli.gd)
+const BRIDGE_FILES = ['plugin.cfg', 'plugin.gd', 'runner/gwe_runner.gd', 'runner/cli.gd', 'runner/runner_scene.gd', 'runner/runner.tscn'];
 
 export function defaultProjectGodot(name) {
   const safe = String(name).replace(/["\\]/g, '');

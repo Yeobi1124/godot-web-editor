@@ -6,7 +6,9 @@ extends EditorPlugin
 ## 이 플러그인이 Godot 에디터 API로 처리하고 window.__godotBridgeResolve(json) 으로 응답한다.
 ## 웹 에디터가 아닌 환경(데스크톱 Godot 등)에서는 아무 동작도 하지 않는다.
 
-const BRIDGE_VERSION := 1
+const BRIDGE_VERSION := 2
+const RUNNER_SCENE := "res://addons/web_editor_bridge/runner/runner.tscn"
+const RUNNER_CONFIG := "res://.godot/gwe_runner.json"
 const IGNORED_DIRS := [".godot", ".git", ".import"]
 
 ## 웹 에디터에서는 이 설정들의 기본값이 "gl_compatibility"라서, project.godot을 저장할 때 해당 줄을 지워 버린다.
@@ -98,6 +100,24 @@ func _on_call(args: Array) -> void:
 			result = true
 		"stop":
 			EditorInterface.stop_playing_scene()
+			result = true
+		"prepare_runner":
+			# 테스트/스크립트 검사 준비: 설정을 .godot/(커밋 안 됨)에 쓰고 열린 씬을 저장한다.
+			# 페이지는 nonce가 IndexedDB에 저장된 것을 확인한 뒤 play_runner를 부른다 (게임은 IndexedDB에서 파일을 읽으므로)
+			var cfg := FileAccess.open(RUNNER_CONFIG, FileAccess.WRITE)
+			if cfg == null:
+				error = "runner config write failed: %s" % FileAccess.get_open_error()
+			elif not FileAccess.file_exists(RUNNER_SCENE):
+				error = "runner scene not found: %s" % RUNNER_SCENE
+			else:
+				EditorInterface.save_all_scenes()
+				cfg.store_string(JSON.stringify({"mode": str(params.get("mode", "test")), "filter": str(params.get("filter", "")), "nonce": str(params.get("nonce", ""))}))
+				cfg.close()
+				result = true
+		"play_runner":
+			if EditorInterface.is_playing_scene():
+				EditorInterface.stop_playing_scene()
+			EditorInterface.play_custom_scene(RUNNER_SCENE)
 			result = true
 		"set_main_screen":
 			var screen := str(params.get("name", "2D"))

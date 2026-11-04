@@ -7,7 +7,9 @@
 //   2. 없으면 파일 도구는 사용자 GitHub 토큰으로 저장소에 바로 커밋 (커밋 작성자는 본인)
 //   3. 에디터가 꼭 필요한 도구(스크린샷, 실행 등)는 "에디터를 여세요" 오류
 import { GITHUB_TOOLS, GitHubBackend } from '../../mcp-server/src/github-backend.js';
+import { GitHubClient } from '../../web/js/github.js';
 import { TOOL_DEFS, toDescriptor, toMcpContent } from '../../web/js/tool-defs.js';
+import { NOT_CONFIGURED as RUNNER_NOT_CONFIGURED, runnerConfigured, startRun, waitRun } from './actions-runner.js';
 import { requireToken } from './auth.js';
 import { error, getCookie, json, SESSION_COOKIE } from './http.js';
 import { hubFor } from './hub.js';
@@ -18,6 +20,8 @@ import { sessionFor } from './session.js';
 const PROTOCOL_VERSIONS = ['2025-11-25', '2025-06-18', '2025-03-26', '2024-11-05'];
 const SERVER_INFO = { name: 'godot-web-editor', title: 'Godot Web Editor', version: '0.2.0' };
 const SLOW_TOOLS = new Set(['screenshot', 'run_project', 'write_files', 'sync_now', 'pull_remote']);
+const RUNNER_TOOLS = new Set(['run_tests', 'check_scripts']);
+const toolTimeout = (name) => (RUNNER_TOOLS.has(name) ? 150000 : SLOW_TOOLS.has(name) ? 60000 : 30000);
 const USER_AGENT = 'godot-web-editor-worker';
 
 const instructions = (origin) => `Godot 4 웹 에디터 프로젝트(GitHub 저장소와 동기화됨)를 다루는 도구입니다.
@@ -105,10 +109,11 @@ async function callTool(env, origin, { user, session }, name, rawArgs) {
     project.branch = repo.default_branch || 'main';
   }
 
-  const viaTab = await hub.callTool(project ? keyOf(project) : null, name, args, SLOW_TOOLS.has(name) ? 60000 : 30000);
+  const viaTab = args.request_id && RUNNER_TOOLS.has(name) ? { handled: false } : await hub.callTool(project ? keyOf(project) : null, name, args, toolTimeout(name));
   if (viaTab.handled) return viaTab.result;
 
   const target = project ?? (viaTab.defaultProject ? parseProject(viaTab.defaultProject) : null);
+  if (RUNNER_TOOLS.has(name)) return toMcpContent(await runOnActions(env, session, name, args, target));
   if (def.needsEditor) return errorResult(`'${name}'은(는) 웹 에디터가 열려 있어야 합니다. 브라우저에서 ${origin} 을 열고 ${target ? keyOf(target) : '프로젝트'}를 열어 주세요.`);
   if (!target) return errorResult('대상 프로젝트를 모릅니다. project 인자("소유자/저장소@브랜치")를 주거나, list_projects로 쓸 수 있는 저장소를 확인하세요.');
   if (!GITHUB_TOOLS.has(name)) return errorResult(`GitHub 모드에서 지원하지 않는 도구: ${name}`);
@@ -117,6 +122,24 @@ async function callTool(env, origin, { user, session }, name, rawArgs) {
   );
   if (name === 'get_status') result.editor_url = origin;
   return toMcpContent(result);
+}
+
+/** 에디터 탭이 없을 때: GitHub Actions(godot-runner.yml)로 테스트/검사 */
+async function runOnActions(env, session, name, args, target) {
+  if (!runnerConfigured(env)) throw new Error(RUNNER_NOT_CONFIGURED);
+  if (args.request_id) {
+    if (!/^[A-Za-z0-9]{8,40}$/.test(String(args.request_id))) throw new Error('request_id 형식이 잘못되었습니다');
+    return waitRun(env, String(args.request_id));
+  }
+  if (!target) throw new Error('대상 프로젝트를 모릅니다. project 인자("소유자/저장소@브랜치")를 주거나, list_projects로 확인하세요.');
+  const sha = await withToken(session, async (token) => {
+    const gh = new GitHubClient({ token, owner: target.owner, repo: target.repo, apiBase: env.GITHUB_API_BASE, headers: { 'User-Agent': USER_AGENT } });
+    const head = await gh.getBranchHead(target.branch);
+    if (!head) throw new Error(`브랜치가 없습니다: ${keyOf(target)}`);
+    return head;
+  });
+  const result = await startRun(env, { repo: `${target.owner}/${target.repo}`, sha, mode: name === 'check_scripts' ? 'check' : 'test', filter: args.filter ?? '' });
+  return { project: keyOf(target), commit: sha, ...result };
 }
 
 const rpcResult = (id, result) => ({ jsonrpc: '2.0', id, result });

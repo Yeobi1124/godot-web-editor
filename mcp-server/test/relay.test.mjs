@@ -114,10 +114,10 @@ describe('인증', () => {
 });
 
 describe('도구 목록과 GitHub 대체 처리 (에디터 탭 없음)', () => {
-  test('tools/list: 14개 + list_projects + 전원 도구 3개, 프로젝트 도구에 project 인자', async () => {
+  test('tools/list: 16개 + list_projects + 전원 도구 3개, 프로젝트 도구에 project 인자', async () => {
     const client = await mcpClient(CLI_TOKEN);
     const { tools } = await client.listTools();
-    assert.equal(tools.length, 18);
+    assert.equal(tools.length, 20);
     const serverTools = ['list_projects', 'get_server_power', 'set_auto_stop', 'stop_server'];
     for (const t of tools.filter((t) => !serverTools.includes(t.name))) assert.ok(t.inputSchema.properties.project, t.name);
     const del = tools.find((t) => t.name === 'delete_files');
@@ -279,7 +279,7 @@ describe('OAuth (claude.ai / 모바일 커넥터 흐름)', () => {
     assert.equal(reuse.status, 400, '인가 코드는 한 번만');
 
     const client = await mcpClient(tok.access_token);
-    assert.equal((await client.listTools()).tools.length, 18);
+    assert.equal((await client.listTools()).tools.length, 20);
     await client.close();
 
     const ref = await (await token({ grant_type: 'refresh_token', refresh_token: tok.refresh_token })).json();
@@ -287,7 +287,7 @@ describe('OAuth (claude.ai / 모바일 커넥터 흐름)', () => {
     const refAgain = await token({ grant_type: 'refresh_token', refresh_token: tok.refresh_token });
     assert.equal(refAgain.status, 400, '리프레시 토큰은 회전');
     const client2 = await mcpClient(ref.access_token);
-    assert.equal((await client2.listTools()).tools.length, 18);
+    assert.equal((await client2.listTools()).tools.length, 20);
     await client2.close();
   });
 });

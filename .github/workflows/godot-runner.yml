@@ -1,0 +1,127 @@
+# Godot 실행기: 게임 저장소의 테스트 실행 / 스크립트 검사 (웹 에디터가 열려 있지 않을 때 Worker가 실행)
+# 실행 로직은 web/addon/web_editor_bridge/runner/ (브라우저와 같은 코드)
+# 필요한 설정 (docs/CLOUD-SETUP.md)
+#   Variables: GH_APP_ID            GitHub App ID
+#   Secrets:   GH_APP_PRIVATE_KEY   GitHub App 비공개 키 (.pem 내용)
+# GitHub App은 Actions: Read and write 권한이 있고, 이 저장소와 게임 저장소에 설치되어 있어야 한다.
+name: Godot 실행기
+run-name: gwe ${{ inputs.request_id }}
+
+on:
+  workflow_dispatch:
+    inputs:
+      repo:
+        description: '게임 저장소 (소유자/이름)'
+        required: true
+      sha:
+        description: '커밋 SHA'
+        required: true
+      mode:
+        description: 'test 또는 check'
+        type: choice
+        options: [test, check]
+        default: test
+      filter:
+        description: '테스트 파일 이름 필터 (test 모드)'
+        default: ''
+      request_id:
+        description: 'Worker가 결과를 찾을 때 쓰는 id'
+        required: true
+
+permissions:
+  contents: read
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    env:
+      GODOT_VERSION: 4.7.2
+      IN_REPO: ${{ inputs.repo }}
+      IN_SHA: ${{ inputs.sha }}
+      IN_MODE: ${{ inputs.mode }}
+      IN_FILTER: ${{ inputs.filter }}
+    steps:
+      - name: 입력 확인
+        id: in
+        run: |
+          [[ "$IN_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "잘못된 저장소: $IN_REPO"; exit 1; }
+          [[ "$IN_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "잘못된 SHA: $IN_SHA"; exit 1; }
+          [[ "$IN_FILTER" =~ ^[A-Za-z0-9_.-]*$ ]] || { echo "필터에는 영문, 숫자, _ . - 만 쓸 수 있습니다"; exit 1; }
+          echo "owner=${IN_REPO%%/*}" >> "$GITHUB_OUTPUT"
+          echo "name=${IN_REPO##*/}" >> "$GITHUB_OUTPUT"
+          echo "cache=$(echo "$IN_REPO" | tr '/' '_')" >> "$GITHUB_OUTPUT"
+
+      - name: 실행기 코드
+        uses: actions/checkout@v4
+        with:
+          path: self
+          sparse-checkout: web/addon/web_editor_bridge/runner
+          persist-credentials: false
+
+      - name: 게임 저장소 읽기 토큰 (그 저장소만, contents:read)
+        id: token
+        uses: actions/create-github-app-token@v2
+        with:
+          app-id: ${{ vars.GH_APP_ID }}
+          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          owner: ${{ steps.in.outputs.owner }}
+          repositories: ${{ steps.in.outputs.name }}
+          permission-contents: read
+
+      - name: 게임 저장소
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ inputs.repo }}
+          ref: ${{ inputs.sha }}
+          token: ${{ steps.token.outputs.token }}
+          path: game
+          persist-credentials: false
+
+      - name: Godot 캐시
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/godot
+          key: godot-${{ env.GODOT_VERSION }}-linux
+
+      - name: Godot 받기
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/godot && cd ~/godot
+          curl -fsSL -o g.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -q g.zip && rm g.zip
+
+      - name: 리소스 import 캐시 (.godot)
+        uses: actions/cache@v4
+        with:
+          path: game/.godot
+          key: gwe-import-${{ steps.in.outputs.cache }}-${{ inputs.sha }}
+          restore-keys: gwe-import-${{ steps.in.outputs.cache }}-
+
+      - name: 리소스 import
+        run: |
+          mkdir -p game/.gwe_runner
+          cp self/web/addon/web_editor_bridge/runner/*.gd game/.gwe_runner/
+          timeout 600 ~/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64 --headless --path game --import > import.log 2>&1 || true
+          tail -20 import.log
+
+      - name: 실행
+        run: |
+          set +e
+          timeout 600 ~/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64 --headless --path game -s res://.gwe_runner/cli.gd -- "$IN_MODE" "$IN_FILTER" > out.log 2>&1
+          code=$?
+          set -e
+          tail -200 out.log | grep -v '^GWE_RESULT ' || true
+          result=$(grep '^GWE_RESULT ' out.log | tail -1)
+          if [ -z "$result" ]; then
+            echo "GWE_RESULT {\"ok\":false,\"error\":\"실행기가 결과를 출력하지 못했습니다 (종료 코드 $code)\"}"
+            exit 1
+          fi
+          echo "$result"
+          {
+            echo "### Godot 실행기 ($IN_MODE) — $IN_REPO@${IN_SHA:0:7}"
+            echo '```json'
+            echo "${result#GWE_RESULT }"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

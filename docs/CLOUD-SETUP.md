@@ -5,7 +5,7 @@
 - GitHub 토큰은 Worker에만 보관되고 브라우저에는 저장되지 않는다.
 
 > 포함된 것: 웹 에디터, GitHub 로그인, GitHub 동기화, **MCP(Claude 연결)**와 열린 에디터 실시간 조종.
-> 아직 없는 것: Godot 실행기(테스트 실행, 게임 화면 캡처).
+> **테스트 실행기**(테스트 실행, 스크립트 오류 검사)도 포함. 게임 화면 캡처는 아직 없음.
 > GitHub Pages 배포는 내렸다. 예전 MCP 중계 서버는 Pages 에디터에 의존해서 지금은 동작하지 않는다(MCP 단계에서 대체).
 
 ## 구조
@@ -108,6 +108,44 @@ claude mcp add --transport http godot https://godotweb.<하위도메인>.workers
 
 연결은 30일 동안 쓰지 않으면 만료된다(쓰는 동안은 자동 갱신). 만료되거나 GitHub 로그인이 끝나면 커넥터를 다시 연결한다.
 
+## 테스트 실행기 (run_tests, check_scripts)
+Claude가 MCP 도구로 테스트를 돌리고 스크립트 오류를 검사한다.
+- **`run_tests`**: `tests/test_*.gd`의 `test_` 함수를 실행한다. 함수는 assert 도우미 `t`를 받는다.
+- **`check_scripts`**: 모든 `.gd`를 다시 읽어 파싱 오류를 파일·줄로 알려 준다.
+
+```gdscript
+# tests/test_player.gd
+extends RefCounted
+
+func test_jump(t):
+	t.eq(1 + 1, 2, "덧셈")
+	t.ok(true, "조건")
+```
+
+어디서 실행되는지:
+| 상황 | 실행 위치 | 걸리는 시간 |
+|---|---|---|
+| 그 프로젝트의 웹 에디터가 열려 있음 | 그 브라우저 안의 Godot | 몇 초 |
+| 열려 있지 않음 (휴대폰 등) | 이 저장소의 GitHub Actions (`godot-runner.yml`) | 1~2분 |
+
+- 실행 로직은 `web/addon/web_editor_bridge/runner/`에 있고, 양쪽이 같은 코드를 쓴다.
+- 브리지 애드온과 함께 게임 저장소에 자동으로 설치된다.
+- Actions가 100초 안에 끝나지 않으면 `request_id`를 돌려주고, Claude가 그 id로 다시 호출해 결과를 받는다.
+
+**Actions 경로 설정 (처음 한 번)**
+1. GitHub App 설정 → Permissions → Repository permissions → **Actions: Read and write** → Save. 설치 화면에 뜨는 권한 변경 요청을 **승인**한다.
+2. 앱 설치 대상에 **이 저장소(godot-web-editor)**를 추가한다. 실행기 워크플로가 여기 있다.
+3. 이 저장소 Settings → Secrets and variables → Actions
+   - Variables: `GH_APP_ID` = 앱 화면의 App ID
+   - Secrets: `GH_APP_PRIVATE_KEY` = 앱의 비공개 키(.pem) 파일 내용 전체
+4. 다시 배포한다 (main에 push하거나 "클라우드 Worker" 워크플로를 실행).
+
+보안 메모
+- Worker가 Actions를 실행할 때 쓰는 토큰은 **이 저장소만, actions 권한만** 가진 1시간짜리 앱 토큰이다.
+- 워크플로가 게임 저장소를 받을 때 쓰는 토큰은 **그 게임 저장소만, contents:read**다.
+- 사용자 GitHub 토큰은 Actions로 넘어가지 않는다.
+- 입력값(저장소, SHA, 필터)은 워크플로에서 형식을 검사한다.
+
 ## 로컬 개발과 테스트
 ```bash
 scripts/build-worker.sh           # dist-worker/ 빌드 (Godot 웹 에디터 zip은 .cache/에 보관)
@@ -132,6 +170,9 @@ GitHub App의 Callback URL에 `http://localhost:8787/auth/callback`도 추가해
 | 에디터가 "내려받는 중"에서 멈춤 | 강력 새로고침(Ctrl+Shift+R). 엔진 캐시(service worker)를 다시 받는다 |
 | Claude가 "웹 에디터가 열려 있어야" 라고 함 | 그 도구(스크린샷, 실행 등)는 브라우저에 에디터가 열려 있어야 한다. 상단의 MCP 배지가 초록(연결됨)인지 확인 |
 | Claude 연결이 갑자기 안 됨 | claude.ai 커넥터 설정에서 연결 해제 후 다시 연결 |
+| run_tests가 "GitHub Actions 실행기가 설정되지 않았습니다" | `GH_APP_ID`, `GH_APP_PRIVATE_KEY`를 넣고 다시 배포. 에디터를 열어 두면 설정 없이 브라우저에서 실행됨 |
+| run_tests가 "GitHub App이 ...에 설치되어 있지 않습니다" | 앱 설치 대상에 이 저장소(실행기)와 게임 저장소가 둘 다 있는지 확인 |
+| Actions 실행이 "Resource not accessible by integration" | 앱에 Actions: Read and write 권한을 주고, 설치 화면에서 권한 변경을 승인했는지 확인 |
 
 ## 보안 메모
 - 세션 쿠키: `__Host-` 접두사, `HttpOnly; Secure; SameSite=Lax`. 페이지 자바스크립트에서 읽을 수 없다.
