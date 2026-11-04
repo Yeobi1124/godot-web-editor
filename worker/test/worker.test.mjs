@@ -3,6 +3,7 @@ import { after, before, describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
+import { createRequire } from 'node:module';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -10,6 +11,7 @@ import { fileURLToPath } from 'node:url';
 import { FakeGitHub } from '../../tests/fake-github.mjs';
 
 const WORKER = resolve(dirname(fileURLToPath(import.meta.url)), '..');
+const WebSocket = createRequire(import.meta.url)('ws');
 let gh;
 let oauth;
 let wrangler;
@@ -233,3 +235,242 @@ describe('클라우드 Worker', () => {
     assert.equal((await replay.fetch('/api/me')).status, 401, '삭제된 세션 쿠키 재사용 불가');
   });
 });
+
+// ---------- MCP (Claude 연결) ----------
+
+const b64url = (buf) => Buffer.from(buf).toString('base64url');
+const REDIRECT = 'http://localhost:9/callback';
+
+/** MCP 클라이언트가 하는 일: 등록 → 승인 화면 → 허용 → GitHub 로그인 → code → 토큰 */
+async function mcpConnect(b = new Browser(), { verifier = b64url(randomBytes(32)) } = {}) {
+  const reg = await fetch(`${base}/oauth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_name: 'Test Claude', redirect_uris: [REDIRECT] }) });
+  assert.equal(reg.status, 201);
+  const client = await reg.json();
+  const challenge = b64url(createHash('sha256').update(verifier).digest());
+  const q = new URLSearchParams({ response_type: 'code', client_id: client.client_id, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: 'S256', state: 'client-state', scope: 'mcp' });
+  const consent = await b.fetch(`/oauth/authorize?${q}`);
+  assert.equal(consent.status, 200);
+  assert.match(await consent.text(), /Test Claude/);
+  const allow = await b.fetch('/oauth/authorize', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `${q}&action=allow` });
+  assert.equal(allow.status, 302);
+  const gh1 = await b.fetch(allow.headers.get('Location'));
+  const cb = await b.fetch(gh1.headers.get('Location'));
+  assert.equal(cb.status, 302, await cb.clone().text());
+  const back = new URL(cb.headers.get('Location'));
+  assert.equal(back.origin + back.pathname, REDIRECT);
+  assert.equal(back.searchParams.get('state'), 'client-state');
+  const code = back.searchParams.get('code');
+  const tok = await tokenRequest({ grant_type: 'authorization_code', code, code_verifier: verifier, redirect_uri: REDIRECT, client_id: client.client_id });
+  assert.equal(tok.status, 200);
+  return { client, code, verifier, ...(await tok.json()) };
+}
+
+const tokenRequest = (params) => fetch(`${base}/oauth/token`, { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: new URLSearchParams(params) });
+
+let rpcId = 0;
+async function rpc(token, method, params = {}) {
+  const res = await fetch(`${base}/mcp`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json', Accept: 'application/json, text/event-stream' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method, params }) });
+  assert.equal(res.status, 200, await res.clone().text());
+  const body = await res.json();
+  assert.ok(!body.error, JSON.stringify(body.error));
+  return body.result;
+}
+const call = async (token, name, args = {}) => {
+  const r = await rpc(token, 'tools/call', { name, arguments: args });
+  const text = r.content?.[0]?.text;
+  let data = null;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    /* 오류 문장 */
+  }
+  return { ...r, text, data };
+};
+
+/** 로그인한 브라우저 탭처럼 /live 에 붙는다 */
+async function openTab(b, project = { owner: 'tester', repo: 'game', branch: 'main' }) {
+  const ws = new WebSocket(`${base.replace('http', 'ws')}/live`, { headers: { Cookie: [...b.cookies].map(([k, v]) => `${k}=${v}`).join('; '), Origin: base } });
+  const messages = [];
+  const waiters = [];
+  ws.on('message', (d) => {
+    const m = JSON.parse(d.toString());
+    const w = waiters.findIndex((x) => x.pred(m));
+    if (w >= 0) waiters.splice(w, 1)[0].resolve(m);
+    else messages.push(m);
+  });
+  const next = (pred, ms = 10000) =>
+    new Promise((resolve, reject) => {
+      const i = messages.findIndex(pred);
+      if (i >= 0) return resolve(messages.splice(i, 1)[0]);
+      waiters.push({ pred, resolve });
+      setTimeout(() => reject(new Error('메시지를 기다리다 시간 초과')), ms);
+    });
+  await new Promise((r, j) => {
+    ws.on('open', r);
+    ws.on('error', j);
+  });
+  ws.send(JSON.stringify({ type: 'hello', protocol: 1, pairingToken: 'session', project, app: { kind: 'browser' }, tools: [] }));
+  await next((m) => m.type === 'welcome');
+  return { ws, next, send: (m) => ws.send(JSON.stringify(m)) };
+}
+
+describe('MCP (Claude 연결)', () => {
+  test('메타데이터와 인증 요구', async () => {
+    const prm = await (await fetch(`${base}/.well-known/oauth-protected-resource/mcp`)).json();
+    assert.equal(prm.resource, `${base}/mcp`);
+    const asm = await (await fetch(`${base}/.well-known/oauth-authorization-server`)).json();
+    assert.deepEqual([asm.authorization_endpoint, asm.token_endpoint, asm.registration_endpoint], [`${base}/oauth/authorize`, `${base}/oauth/token`, `${base}/oauth/register`]);
+    assert.deepEqual(asm.code_challenge_methods_supported, ['S256']);
+    const r = await fetch(`${base}/mcp`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' });
+    assert.equal(r.status, 401);
+    assert.match(r.headers.get('www-authenticate'), /resource_metadata="http:\/\/localhost:\d+\/\.well-known\/oauth-protected-resource"/);
+    assert.equal((await fetch(`${base}/mcp`, { method: 'POST', headers: { Authorization: 'Bearer nope.nope' } })).status, 401);
+  });
+
+  test('등록: 허용되지 않은 redirect_uri 거부, 위조한 client_id 거부', async () => {
+    const bad = await fetch(`${base}/oauth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redirect_uris: ['https://evil.example/cb'] }) });
+    assert.equal(bad.status, 400);
+    const ok = await fetch(`${base}/oauth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redirect_uris: ['https://claude.ai/api/mcp/auth_callback'] }) });
+    const { client_id } = await ok.json();
+    const forged = client_id.replace(/\.[^.]+$/, '.AAAA');
+    const r = await fetch(`${base}/oauth/authorize?response_type=code&client_id=${encodeURIComponent(forged)}&redirect_uri=${encodeURIComponent('https://claude.ai/api/mcp/auth_callback')}&code_challenge=x&code_challenge_method=S256`);
+    assert.equal(r.status, 400, '리다이렉트하지 않고 오류 화면');
+    const other = await fetch(`${base}/oauth/authorize?response_type=code&client_id=${encodeURIComponent(client_id)}&redirect_uri=${encodeURIComponent('http://localhost:1/x')}&code_challenge=x&code_challenge_method=S256`);
+    assert.equal(other.status, 400, '등록하지 않은 redirect_uri');
+  });
+
+  test('승인 → 토큰, PKCE 검사, 코드 재사용 불가, 거부하면 access_denied', async () => {
+    const c = await mcpConnect();
+    assert.equal(c.token_type, 'Bearer');
+    assert.ok(!c.access_token.includes('ghu_'), 'GitHub 토큰을 Claude에 주지 않음');
+    const again = await tokenRequest({ grant_type: 'authorization_code', code: c.code, code_verifier: c.verifier, redirect_uri: REDIRECT, client_id: c.client.client_id });
+    assert.equal((await again.json()).error, 'invalid_grant', '코드는 한 번만');
+
+    // 틀린 verifier
+    const b = new Browser();
+    await assert.rejects(() => mcpConnectWithWrongVerifier(b));
+
+    // 거부
+    const reg = await (await fetch(`${base}/oauth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redirect_uris: [REDIRECT] }) })).json();
+    const q = new URLSearchParams({ response_type: 'code', client_id: reg.client_id, redirect_uri: REDIRECT, code_challenge: 'abc', code_challenge_method: 'S256', state: 's' });
+    const deny = await b.fetch('/oauth/authorize', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `${q}&action=deny` });
+    assert.equal(new URL(deny.headers.get('Location')).searchParams.get('error'), 'access_denied');
+  });
+
+  test('initialize, tools/list', async () => {
+    const { access_token } = await mcpConnect();
+    const init = await rpc(access_token, 'initialize', { protocolVersion: '2025-06-18', capabilities: {}, clientInfo: { name: 't', version: '1' } });
+    assert.equal(init.protocolVersion, '2025-06-18');
+    assert.equal(init.serverInfo.name, 'godot-web-editor');
+    assert.match(init.instructions, /list_projects/);
+    const notif = await fetch(`${base}/mcp`, { method: 'POST', headers: { Authorization: `Bearer ${access_token}`, 'Content-Type': 'application/json' }, body: '{"jsonrpc":"2.0","method":"notifications/initialized"}' });
+    assert.equal(notif.status, 202);
+    const { tools } = await rpc(access_token, 'tools/list');
+    const names = tools.map((t) => t.name);
+    for (const n of ['get_status', 'read_file', 'write_files', 'screenshot', 'list_projects']) assert.ok(names.includes(n), n);
+    assert.ok(tools.find((t) => t.name === 'write_files').inputSchema.properties.project, 'project 인자');
+    assert.ok(!names.some((n) => /server|power|auto_stop/.test(n)), '전원 도구 없음');
+  });
+
+  test('탭이 없을 때: GitHub에 바로 (사용자 토큰), 에디터 전용 도구는 안내', async () => {
+    const { access_token } = await mcpConnect();
+    const lp = await call(access_token, 'list_projects');
+    assert.deepEqual(lp.data.repositories.map((r) => r.project), ['tester/game@main']);
+    const none = await call(access_token, 'read_file', { path: 'main.gd' });
+    // 아직 연 프로젝트가 없는 새 사용자라면 project를 요구한다 (다른 테스트가 먼저 탭을 열었으면 그 프로젝트)
+    if (none.isError) assert.match(none.text, /project 인자/);
+    const read = await call(access_token, 'read_file', { path: 'main.gd', project: 'tester/game' });
+    assert.equal(read.data.content, 'extends Node\n');
+    const st = await call(access_token, 'get_status', { project: 'tester/game@main' });
+    assert.equal(st.data.mode, 'github');
+    assert.equal(st.data.editor_url, base);
+    const w = await call(access_token, 'write_files', { project: 'tester/game@main', files: [{ path: 'from_claude.gd', content: 'extends Node\n# mcp\n' }], commit_message: 'Claude: 테스트' });
+    assert.ok(!w.isError, w.text);
+    assert.equal(gh.text('from_claude.gd'), 'extends Node\n# mcp\n');
+    assert.match(gh.lastAuthorization, /^Bearer ghu_user_/, '커밋은 사용자 토큰으로');
+    assert.equal(gh.lastCommitMessage(), 'Claude: 테스트');
+    const shot = await call(access_token, 'screenshot', { project: 'tester/game@main' });
+    assert.ok(shot.isError);
+    assert.match(shot.text, /웹 에디터가 열려 있어야/);
+    const bad = await call(access_token, 'read_file', { path: 'x', project: 'not a project' });
+    assert.ok(bad.isError);
+  });
+
+  test('리프레시 토큰 회전', async () => {
+    const c = await mcpConnect();
+    const r1 = await (await tokenRequest({ grant_type: 'refresh_token', refresh_token: c.refresh_token, client_id: c.client.client_id })).json();
+    assert.ok(r1.access_token && r1.refresh_token && r1.refresh_token !== c.refresh_token);
+    assert.ok((await rpc(r1.access_token, 'tools/list')).tools.length > 0);
+    const reuse = await (await tokenRequest({ grant_type: 'refresh_token', refresh_token: c.refresh_token, client_id: c.client.client_id })).json();
+    assert.equal(reuse.error, 'invalid_grant', '한 번 쓴 리프레시 토큰은 무효');
+    const oldAccess = await fetch(`${base}/mcp`, { method: 'POST', headers: { Authorization: `Bearer ${c.access_token}`, 'Content-Type': 'application/json' }, body: '{"jsonrpc":"2.0","id":1,"method":"ping"}' });
+    assert.equal(oldAccess.status, 401, '이전 접근 토큰도 무효');
+  });
+
+  test('열린 탭으로 전달: 호출 → 탭 응답 → 결과, 탭 목록, 끊기면 GitHub로', async () => {
+    const b = new Browser();
+    await b.login();
+    // 로그인 안 한 연결, 다른 Origin은 거부
+    const anon = new WebSocket(`${base.replace('http', 'ws')}/live`, { headers: { Origin: base } });
+    const anonStatus = await new Promise((r) => anon.on('unexpected-response', (_q, res) => r(res.statusCode)).on('open', () => r(101)));
+    assert.equal(anonStatus, 401);
+    const evil = new WebSocket(`${base.replace('http', 'ws')}/live`, { headers: { Origin: 'https://evil.example', Cookie: [...b.cookies].map(([k, v]) => `${k}=${v}`).join('; ') } });
+    assert.equal(await new Promise((r) => evil.on('unexpected-response', (_q, res) => r(res.statusCode)).on('open', () => r(101))), 403);
+
+    const tab = await openTab(b);
+    tab.send({ type: 'ping' });
+    assert.equal((await tab.next((m) => m.type === 'pong')).type, 'pong', '자동 pong');
+    tab.send({ type: 'state', bridgeReady: true, syncPhase: 'idle', head: 'abc', visible: true });
+
+    const { access_token } = await mcpConnect();
+    const pending = call(access_token, 'get_editor_state');
+    const msg = await tab.next((m) => m.type === 'call');
+    assert.equal(msg.name, 'get_editor_state');
+    tab.send({ type: 'result', id: msg.id, content: [{ type: 'text', text: JSON.stringify({ current_scene: 'main.tscn' }) }] });
+    const r = await pending;
+    assert.equal(r.data.current_scene, 'main.tscn', '탭이 처리한 결과');
+
+    const shotP = call(access_token, 'screenshot', {});
+    const shotMsg = await tab.next((m) => m.type === 'call' && m.name === 'screenshot');
+    tab.send({ type: 'result', id: shotMsg.id, content: [{ type: 'image', data: 'iVBORw0KGgo=', mimeType: 'image/png' }] });
+    assert.equal((await shotP).content[0].type, 'image');
+
+    const lp = await call(access_token, 'list_projects');
+    assert.equal(lp.data.editor_tabs.length, 1);
+    assert.equal(lp.data.editor_tabs[0].project, 'tester/game@main');
+    assert.equal(lp.data.editor_tabs[0].editor_ready, true);
+    assert.equal(lp.data.default_project, 'tester/game@main');
+
+    // 다른 프로젝트를 지정하면 탭으로 가지 않음 (탭은 tester/game@main)
+    const otherBranch = await call(access_token, 'get_status', { project: 'tester/game@dev' });
+    assert.ok(otherBranch.isError || otherBranch.data.mode === 'github');
+
+    // 탭이 응답 중에 끊기면 오류, 이후에는 마지막 프로젝트로 GitHub 처리
+    const cut = call(access_token, 'get_editor_state');
+    await tab.next((m) => m.type === 'call');
+    tab.ws.close();
+    const cutR = await cut;
+    assert.ok(cutR.isError);
+    assert.match(cutR.text, /연결이 끊겼습니다/);
+    await new Promise((r) => setTimeout(r, 300));
+    const after = await call(access_token, 'get_status');
+    assert.equal(after.data.mode, 'github', '탭이 없으면 마지막 프로젝트로 GitHub');
+    assert.equal(after.data.repository, 'tester/game');
+  });
+});
+
+async function mcpConnectWithWrongVerifier(b) {
+  const verifier = b64url(randomBytes(32));
+  const c = await mcpConnect(b, { verifier }).catch(() => null);
+  if (!c) throw new Error('connect failed');
+  const reg = await (await fetch(`${base}/oauth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ redirect_uris: [REDIRECT] }) })).json();
+  const challenge = b64url(createHash('sha256').update(verifier).digest());
+  const q = new URLSearchParams({ response_type: 'code', client_id: reg.client_id, redirect_uri: REDIRECT, code_challenge: challenge, code_challenge_method: 'S256', state: 's' });
+  const allow = await b.fetch('/oauth/authorize', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `${q}&action=allow` });
+  const gh1 = await b.fetch(allow.headers.get('Location'));
+  const cb = await b.fetch(gh1.headers.get('Location'));
+  const code = new URL(cb.headers.get('Location')).searchParams.get('code');
+  const tok = await (await tokenRequest({ grant_type: 'authorization_code', code, code_verifier: 'wrong-verifier', redirect_uri: REDIRECT, client_id: reg.client_id })).json();
+  if (tok.error === 'invalid_grant') throw new Error('rejected as expected');
+  return tok;
+}

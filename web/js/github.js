@@ -14,8 +14,10 @@ export class GitHubError extends Error {
 export class GitHubClient {
   #token;
 
-  constructor({ token = null, owner, repo, apiBase = 'https://api.github.com', onUnauthorized = null }) {
+  /** headers: 추가 요청 헤더 (Cloudflare Worker에서 쓸 때 GitHub가 요구하는 User-Agent 등) */
+  constructor({ token = null, owner, repo, apiBase = 'https://api.github.com', onUnauthorized = null, headers = {} }) {
     this.#token = token;
+    this.extraHeaders = headers;
     this.owner = owner;
     this.repo = repo;
     this.apiBase = apiBase.replace(/\/$/, '');

@@ -200,8 +200,8 @@ function bindToolbar({ api, sync, panel, cloud }) {
   $('#settings-close').addEventListener('click', () => $('#settings').close());
 }
 
-/** MCP 중계 서버 연결과 설정 화면 */
-function setupMcp({ api, sync, bridge, info }) {
+/** MCP 연결. 클라우드 모드는 같은 주소의 Worker(/live)에 로그인 쿠키로 자동 연결, 아니면 설정 화면의 중계 서버 */
+function setupMcp({ api, sync, bridge, info, cloud = false }) {
   const mcp = new McpLink({ api, sync, bridge, logs, info });
   const badge = $('#mcp-badge');
   const LABEL = { off: '연결 안 함', connecting: '연결 중…', connected: '연결됨', rejected: '연결 실패' };
@@ -223,6 +223,10 @@ function setupMcp({ api, sync, bridge, info }) {
   };
   mcp.addEventListener('status', render);
   mcp.addEventListener('call', renderCalls);
+  if (cloud) {
+    mcp.configure({ url: location.origin, token: 'session', path: '/live' });
+    return mcp;
+  }
   const saved = loadMcpSettings();
   $('#mcp-url').value = saved.url ?? '';
   $('#mcp-save').addEventListener('click', () => {
@@ -271,7 +275,7 @@ async function main() {
   const cloud = build.mode === 'cloud';
   if (!cloud) preloadEngine();
   if (cloud) {
-    // 클라우드 모드: MCP 연결은 같은 서버가 맡으므로(다음 단계) 수동 설정 칸을 숨긴다
+    // 클라우드 모드: MCP 연결은 같은 주소의 Worker에 자동으로 하므로 수동 설정 칸을 숨긴다
     $('#mcp-section').hidden = true;
     $('#mcp-section-rule').hidden = true;
     $('#btn-logout').textContent = '로그아웃';
@@ -331,7 +335,7 @@ async function main() {
   registerWebMCP(api, logs);
   const panel = new AIPanel({ root: $('#ai-panel'), api, logs, toast });
   bindToolbar({ api, sync, panel, cloud });
-  if (!cloud) app.mcp = setupMcp({ api, sync, bridge, info: api.info });
+  app.mcp = setupMcp({ api, sync, bridge, info: api.info, cloud });
 
   sync.start({ autosaveSec: dev.autosaveSec ?? 30, pollSec: dev.pollSec ?? 30, statusSec: dev.statusSec ?? 10 });
   window.addEventListener('beforeunload', (e) => {

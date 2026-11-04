@@ -18,13 +18,14 @@ function checkPath(raw) {
 export class GitHubBackend {
   #token;
 
-  constructor({ token, apiBase }) {
+  constructor({ token, apiBase, headers = {} }) {
     this.#token = token;
     this.apiBase = apiBase;
+    this.headers = headers;
   }
 
   #client(project) {
-    return new GitHubClient({ token: this.#token, owner: project.owner, repo: project.repo, apiBase: this.apiBase });
+    return new GitHubClient({ token: this.#token, owner: project.owner, repo: project.repo, apiBase: this.apiBase, headers: this.headers });
   }
 
   async #head(gh, branch) {

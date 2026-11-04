@@ -1,7 +1,7 @@
 # MCP 서버 설계
 
 > **지금은 쓰지 않는 방식입니다.** 이 중계 서버는 GitHub Pages 에디터에 의존하는데, Pages 배포를 내렸습니다.
-> MCP는 Cloudflare Worker로 옮길 예정입니다 ([docs/CLOUD-SETUP.md](CLOUD-SETUP.md)).
+> MCP는 Cloudflare Worker로 옮겼습니다: [docs/CLOUD-SETUP.md의 Claude 연결](CLOUD-SETUP.md#claude-연결-mcp).
 
 > 상태: M1~M3 구현 완료 (`mcp-server/`). 설치는 [MCP-SETUP.md](MCP-SETUP.md).
 

@@ -16,9 +16,18 @@ binding = "ASSETS"
 name = "SESSIONS"
 class_name = "Session"
 
+# 사용자별 Hub: 그 사용자의 웹 에디터 탭 WebSocket을 들고 MCP 도구 호출을 전달한다
+[[durable_objects.bindings]]
+name = "HUBS"
+class_name = "Hub"
+
 [[migrations]]
 tag = "v1"
 new_sqlite_classes = ["Session"]
+
+[[migrations]]
+tag = "v2"
+new_sqlite_classes = ["Hub"]
 
 [vars]
 # GitHub App 설정 화면의 Client ID와 앱 이름(주소의 slug). 비밀값 GITHUB_CLIENT_SECRET은 `wrangler secret put`으로 넣는다.

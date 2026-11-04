@@ -38,7 +38,7 @@ Claude 같은 AI가 프로젝트를 읽고 고칠 수 있도록 도구 API도 �
 | **Claude in Chrome 등 브라우저 AI** | 페이지가 `window.godotAI` API를 제공합니다. **AI 패널 → AI 연결** 탭의 안내문을 복사해 AI에게 주세요. |
 | **JS 실행 없이 클릭만 하는 AI** | **AI 패널 → 파일** 탭(경로·내용 입력란, 파일 저장 버튼)을 쓰면 됩니다. |
 | **WebMCP** | 브라우저가 `navigator.modelContext`를 지원하면 같은 도구를 자동으로 등록합니다. (실험적 표준) |
-| **MCP** (claude.ai·모바일·Claude Code) | **준비 중**: Worker로 옮기는 작업(다음 단계)이 끝나면 커넥터 주소 추가 + GitHub 로그인만으로 연결됩니다. 예전 방식(`mcp-server/` 중계 서버)은 GitHub Pages 에디터에 의존해서 지금은 동작하지 않습니다. |
+| **MCP** (claude.ai·모바일·Claude Code) | 커넥터에 `에디터주소/mcp`를 추가하고 GitHub로 로그인하면 끝입니다. 에디터가 열려 있으면 Claude가 그 에디터를 실시간으로 조종하고, 없으면 GitHub에 바로 커밋합니다. [연결 방법](docs/CLOUD-SETUP.md#claude-연결-mcp) |
 
 ```js
 godotAI.help()                                   // 사용법
@@ -72,7 +72,7 @@ node tests/e2e-cloud.mjs       # 브라우저 E2E: 로그인 → 에디터 → �
 
 `main`에 푸시하면 GitHub Actions(**클라우드 Worker** 워크플로)가 테스트 후 Cloudflare에 배포합니다.
 
-예전 방식(토큰 입력, GitHub Pages, MCP 중계 서버)의 코드와 테스트는 MCP를 Worker로 옮긴 뒤 정리할 예정이라 아직 남아 있습니다.
+예전 방식(토큰 입력, GitHub Pages, MCP 중계 서버)의 코드와 테스트는 정리할 예정이라 아직 남아 있습니다.
 
 ```bash
 scripts/build.sh               # dist/ (토큰 입력 방식) — node tools/serve.mjs 8060 dist 로 로컬 확인

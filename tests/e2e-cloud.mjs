@@ -1,9 +1,11 @@
 // E2E 테스트 (클라우드 버전): wrangler dev(로컬 Worker) + 가짜 GitHub(OAuth) + 실제 Godot 웹 에디터
-// GitHub 로그인 → 프로젝트 선택 → 에디터 → 자동 커밋(사용자 토큰) → 원격 반영 → 토큰 갱신 → 로그아웃
+// GitHub 로그인 → 프로젝트 선택 → 에디터 → 자동 커밋(사용자 토큰) → 원격 반영 → 토큰 갱신
+// → MCP(Claude) 연결: 열린 에디터 조종(상태, 파일 쓰기, 스크린샷) → 로그아웃
 // 사용법: scripts/build-worker.sh && (cd worker && npm ci) && node tests/e2e-cloud.mjs [스크린샷 폴더]
 // 필요: playwright (전역 설치 또는 NODE_PATH)
 
 import { spawn } from 'node:child_process';
+import { createHash, randomBytes } from 'node:crypto';
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
@@ -100,6 +102,44 @@ page.on('request', (r) => {
 });
 const ai = (expr) => page.evaluate(expr);
 
+/** MCP 클라이언트 흉내: 등록 → 승인 → GitHub 로그인(가짜) → code → 토큰. 쿠키는 따로 (Claude 쪽 브라우저) */
+async function mcpToken() {
+  const jar = new Map();
+  const go = async (url, init = {}) => {
+    const headers = new Headers(init.headers);
+    if (url.startsWith(BASE) && jar.size) headers.set('Cookie', [...jar].map(([k, v]) => `${k}=${v}`).join('; '));
+    const res = await fetch(url.startsWith('http') ? url : BASE + url, { ...init, headers, redirect: 'manual' });
+    for (const c of res.headers.getSetCookie()) {
+      const [k, v] = c.split(';')[0].split('=');
+      jar.set(k, v);
+    }
+    return res;
+  };
+  const redirect = 'http://localhost:9/cb';
+  const client = await (await fetch(`${BASE}/oauth/register`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ client_name: 'e2e Claude', redirect_uris: [redirect] }) })).json();
+  const verifier = randomBytes(32).toString('base64url');
+  const q = new URLSearchParams({ response_type: 'code', client_id: client.client_id, redirect_uri: redirect, code_challenge: createHash('sha256').update(verifier).digest('base64url'), code_challenge_method: 'S256', state: 's' });
+  const allow = await go('/oauth/authorize', { method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' }, body: `${q}&action=allow` });
+  const ghRes = await go(allow.headers.get('Location'));
+  const cb = await go(ghRes.headers.get('Location'));
+  const code = new URL(cb.headers.get('Location')).searchParams.get('code');
+  const tok = await (await fetch(`${BASE}/oauth/token`, { method: 'POST', body: new URLSearchParams({ grant_type: 'authorization_code', code, code_verifier: verifier, redirect_uri: redirect, client_id: client.client_id }) })).json();
+  return tok.access_token;
+}
+let rpcId = 0;
+async function mcpCall(token, name, args = {}) {
+  const res = await fetch(`${BASE}/mcp`, { method: 'POST', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body: JSON.stringify({ jsonrpc: '2.0', id: ++rpcId, method: 'tools/call', params: { name, arguments: args } }) });
+  const { result } = await res.json();
+  const text = result?.content?.[0]?.text;
+  let data = null;
+  try {
+    data = JSON.parse(text);
+  } catch {
+    /* 이미지나 오류 문장 */
+  }
+  return { ...result, data };
+}
+
 try {
   // 1. 첫 접속: 로그인 화면 (새로고침 우회 없이 cross-origin isolation)
   await page.goto(`${BASE}/?autosave=3&poll=3&status=2`);
@@ -157,7 +197,27 @@ try {
   await sleep(1000);
   await page.screenshot({ path: join(OUT, 'cloud-editor.png') });
 
-  // 6. 로그아웃 → 다시 로그인 화면
+  // 6. MCP(Claude) 연결 → 열린 에디터를 조종
+  const badge = await waitFor(() => ai(() => document.querySelector('#mcp-badge').dataset.state === 'connected'), 20000);
+  check('에디터가 Worker(/live)에 자동 연결 (설정 없이)', !!badge);
+  const token = await mcpToken();
+  check('MCP 토큰 발급 (GitHub 로그인)', typeof token === 'string' && token.includes('.'));
+  const mst = await mcpCall(token, 'get_status');
+  check('MCP get_status → 열린 에디터가 응답', mst.data?.editor_ready === true && mst.data?.repository === 'tester/game', JSON.stringify(mst.data ?? mst).slice(0, 160));
+  const mw = await mcpCall(token, 'write_files', { files: [{ path: 'from_mcp.gd', content: 'extends Node\n# claude\n' }], commit_message: 'Claude: MCP e2e' });
+  check('MCP write_files 성공', !mw.isError && mw.data?.written?.includes('from_mcp.gd'), JSON.stringify(mw.data ?? mw).slice(0, 160));
+  const inEditor = await ai(() => window.godotAI.readFile('from_mcp.gd').then((r) => r.content));
+  check('Claude가 쓴 파일이 열린 에디터에 바로 반영', inEditor?.includes('# claude'));
+  const mcpCommitted = await waitFor(() => gh.text('from_mcp.gd')?.includes('# claude'), 45000);
+  check('에디터 자동 저장으로 커밋 (본인 토큰)', !!mcpCommitted && /^Bearer ghu_user_/.test(gh.lastAuthorization ?? ''), gh.lastCommitMessage()?.split('\n')[0]);
+  await mcpCall(token, 'set_main_screen', { name: '2D' });
+  const shot = await mcpCall(token, 'screenshot', { max_width: 800 });
+  check('MCP screenshot → 에디터 화면 PNG', shot.content?.[0]?.type === 'image' && shot.content[0].data.length > 1000);
+  if (shot.content?.[0]?.data) writeFileSync(join(OUT, 'cloud-mcp-screenshot.png'), Buffer.from(shot.content[0].data, 'base64'));
+  const calls = await ai(() => document.querySelectorAll('#mcp-calls li').length);
+  check('AI 패널에 MCP 호출 기록', calls >= 3, `${calls}건`);
+
+  // 7. 로그아웃 → 다시 로그인 화면
   await page.click('#btn-settings');
   await page.click('#btn-logout');
   await page.waitForSelector('#login[open]', { timeout: 60000 });
