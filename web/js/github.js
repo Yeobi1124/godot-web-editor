@@ -1,4 +1,5 @@
 // GitHub REST API (Git Data API) 최소 클라이언트. 토큰은 이 모듈 밖으로 나가지 않는다.
+// 클라우드 모드에서는 토큰 없이 같은 주소의 /gh 로 보내고, Worker가 로그인 세션의 토큰을 붙인다.
 import { base64ToBytes, bytesToBase64, utf8Encode } from './util.js';
 
 export class GitHubError extends Error {
@@ -13,11 +14,12 @@ export class GitHubError extends Error {
 export class GitHubClient {
   #token;
 
-  constructor({ token, owner, repo, apiBase = 'https://api.github.com' }) {
+  constructor({ token = null, owner, repo, apiBase = 'https://api.github.com', onUnauthorized = null }) {
     this.#token = token;
     this.owner = owner;
     this.repo = repo;
     this.apiBase = apiBase.replace(/\/$/, '');
+    this.onUnauthorized = onUnauthorized;
   }
 
   get repoPath() {
@@ -29,7 +31,8 @@ export class GitHubClient {
       method,
       headers: {
         Accept: 'application/vnd.github+json',
-        Authorization: `Bearer ${this.#token}`,
+        // 토큰이 없으면(클라우드 모드) 세션 쿠키로 인증하고, Worker의 CSRF 검사용 헤더를 붙인다
+        ...(this.#token ? { Authorization: `Bearer ${this.#token}` } : { 'X-GWE': '1' }),
         'X-GitHub-Api-Version': '2022-11-28',
         ...(body ? { 'Content-Type': 'application/json' } : {}),
       },
@@ -43,6 +46,7 @@ export class GitHubClient {
     } catch {
       data = text;
     }
+    if (res.status === 401 && this.onUnauthorized) this.onUnauthorized();
     if (!res.ok) {
       const msg = (data && data.message) || res.statusText || 'request failed';
       throw new GitHubError(res.status, `GitHub ${method} ${path.split('?')[0]}: ${res.status} ${msg}`, data);

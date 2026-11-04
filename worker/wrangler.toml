@@ -1,0 +1,26 @@
+# Godot 웹 에디터 클라우드 버전 (Cloudflare Worker)
+# 처음 설정과 배포 방법: docs/CLOUD-SETUP.md
+name = "godot-web-editor"
+main = "src/index.js"
+compatibility_date = "2026-06-01"
+
+# 웹 에디터 정적 파일 (scripts/build-worker.sh가 만든다). 파일이 없는 경로만 Worker 코드가 처리한다.
+[assets]
+directory = "../dist-worker"
+binding = "ASSETS"
+
+# 로그인 세션 (사용자별 GitHub 토큰 보관). 무료 플랜은 SQLite 기반 Durable Object만 쓸 수 있다.
+[[durable_objects.bindings]]
+name = "SESSIONS"
+class_name = "Session"
+
+[[migrations]]
+tag = "v1"
+new_sqlite_classes = ["Session"]
+
+[vars]
+# GitHub App 설정 화면의 Client ID와 앱 이름(주소의 slug). 비밀값 GITHUB_CLIENT_SECRET은 `wrangler secret put`으로 넣는다.
+GITHUB_CLIENT_ID = ""
+GITHUB_APP_SLUG = ""
+GITHUB_API_BASE = "https://api.github.com"
+GITHUB_WEB_BASE = "https://github.com"

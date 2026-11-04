@@ -8,6 +8,10 @@ Claude 같은 AI가 프로젝트를 읽고 고칠 수 있도록 도구 API도 �
 - 게임 프로젝트: 별도의 GitHub 저장소 (비공개 가능)
 - GitHub 토큰: **내 브라우저에만** 저장, GitHub API 외에는 전송하지 않음
 
+> **클라우드 버전 (Cloudflare Worker):** 토큰 대신 **"GitHub로 로그인"** 만으로 쓰는 버전도 있습니다.
+> 에디터 페이지와 GitHub 연동을 Worker 한 곳에서 제공하고, GitHub 토큰은 브라우저에 남지 않습니다.
+> 설정 방법: [docs/CLOUD-SETUP.md](docs/CLOUD-SETUP.md)
+
 ## 사용법
 
 1. 데스크톱용 **Chrome 또는 Edge**로 에디터 페이지를 엽니다. 첫 방문에는 페이지가 한 번 자동으로 새로고침됩니다.
@@ -68,6 +72,9 @@ node tools/serve.mjs 8060 dist # COOP/COEP 헤더를 붙여 로컬 서빙 → ht
 node tests/e2e.mjs             # 가짜 GitHub API + 헤드리스 Chromium으로 전체 흐름 검증 (playwright 필요)
 (cd mcp-server && npm ci && npm test)   # MCP 중계 서버 통합 테스트
 node tests/e2e-mcp.mjs         # MCP 클라이언트 -> 중계 서버 -> 실제 웹 에디터 E2E
+scripts/build-worker.sh        # 클라우드 버전 dist-worker/ 생성 (엔진 조각, 헤더, mode=cloud)
+(cd worker && npm ci && npm test)   # 클라우드 Worker 통합 테스트 (wrangler dev + 가짜 GitHub OAuth)
+node tests/e2e-cloud.mjs       # 클라우드 버전 E2E: 로그인 → 에디터 → 자동 커밋 → 토큰 갱신 → 로그아웃
 ```
 
 `main` 브랜치에 푸시하면 GitHub Actions가 빌드해서 GitHub Pages에 배포합니다
