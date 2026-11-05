@@ -27,7 +27,19 @@ for f in "$OUT"/engine/part.*; do mv "$f" "$OUT/engine/godot.editor.${f##*.}.was
 PARTS="$(cd "$OUT/engine" && ls godot.editor.*.wasm | sort -V | sed 's/.*/"&"/' | paste -sd, -)"
 SIZE="$(stat -c %s "$WASM")"
 SHA="$(sha256sum "$WASM" | cut -d' ' -f1)"
-printf '{"size":%s,"sha256":"%s","parts":[%s]}\n' "$SIZE" "$SHA" "$PARTS" > "$OUT/engine/wasm-manifest.json"
+# 엔진 조각 미러 (선택): ENGINE_MIRROR=https://<사용자>.github.io/<저장소>/ 이면 브라우저가 그곳에서 먼저 받는다.
+# 경로에 엔진 해시를 넣어 버전이 섞이지 않게 한다. 미러에 올릴 파일은 dist-mirror/ 에 만든다.
+MIRRORS=""
+if [ -n "${ENGINE_MIRROR:-}" ]; then
+  MIRRORS=",\"mirrors\":[\"${ENGINE_MIRROR%/}/engine/${SHA}/\"]"
+fi
+printf '{"size":%s,"sha256":"%s","parts":[%s]%s}\n' "$SIZE" "$SHA" "$PARTS" "$MIRRORS" > "$OUT/engine/wasm-manifest.json"
+MIRROR_OUT="$ROOT/dist-mirror"
+rm -rf "$MIRROR_OUT"
+mkdir -p "$MIRROR_OUT/engine/$SHA"
+cp "$OUT"/engine/godot.editor.*.wasm "$MIRROR_OUT/engine/$SHA/"
+touch "$MIRROR_OUT/.nojekyll"
+printf '<!doctype html><meta charset="utf-8"><title>Godot 엔진 파일</title><p>웹 에디터가 쓰는 Godot 엔진 파일 미러입니다. 에디터 주소는 따로 있습니다.</p>\n' > "$MIRROR_OUT/index.html"
 
 # 조각을 다시 이어 붙였을 때 원본과 같은지 확인
 [ "$(cd "$OUT/engine" && cat $(ls godot.editor.*.wasm | sort -V) | sha256sum | cut -d' ' -f1)" = "$SHA" ] || { echo "엔진 조각 검증 실패" >&2; exit 1; }

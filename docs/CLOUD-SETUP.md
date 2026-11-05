@@ -12,7 +12,8 @@
 ```
 브라우저 ──(같은 주소, 세션 쿠키)──> Cloudflare Worker (worker/)
   /                  웹 에디터 정적 파일 (dist-worker/, COOP/COEP 헤더 포함)
-  /godot.editor.wasm 엔진 조각 4개를 이어 붙여 전송 (정적 파일 25MiB 제한 때문에 나눠 둠)
+  /engine/*.wasm     엔진 조각 4개 (정적 파일 25MiB 제한 때문에 나눔). 서비스 워커가 동시에 받아 이어 붙인다.
+                     미러(GitHub Pages)가 있으면 그쪽에서 먼저 받는다. /godot.editor.wasm(Worker가 이어 붙임)은 예비 경로
   /auth/*            GitHub App 사용자 로그인 (OAuth)
   /api/me, /api/repos 로그인 사용자, 앱이 설치된 저장소 목록
   /gh/*              GitHub API 대리 호출 (에디터가 쓰는 경로만 허용, 사용자 토큰을 붙임)
@@ -84,6 +85,14 @@ godot-web-editor → Settings → Secrets and variables → Actions
 ### 5. 앱 설치
 - 앱 화면 → **Install App** → 내 계정 → 쓸 저장소를 고른다 ("All repositories"도 가능).
 - 나중에 저장소를 추가하려면 에디터의 프로젝트 선택 화면에 있는 "GitHub에서 앱에 저장소 추가/변경" 링크를 쓴다.
+
+### 6. (권장) 엔진 파일 미러: GitHub Pages
+Godot 엔진 파일(약 100MB)은 한국에서 Cloudflare 무료 플랜으로 받으면 느릴 수 있다. 그래서 엔진 조각만 이 저장소의 GitHub Pages에도 올려 두고, 브라우저가 그곳에서 먼저 받게 한다.
+- 이 저장소 Settings → **Pages** → Source: **GitHub Actions**
+- main에 push하면 "클라우드 Worker" 워크플로의 `engine-mirror` 작업이 `https://<사용자>.github.io/<저장소>/engine/<엔진해시>/`에 조각을 올린다.
+- Worker 배포 때 그 주소가 엔진 목록(`wasm-manifest.json`)에 들어간다.
+- 미러가 꺼져 있거나 실패하면 브라우저는 자동으로 Worker의 조각을 받는다.
+- Pages가 꺼져 있으면 `engine-mirror` 작업만 실패하고, Worker 배포는 그대로 진행된다.
 
 ## 사용
 1. Worker 주소를 연다. 데스크톱 Chrome이나 Edge를 쓴다.
