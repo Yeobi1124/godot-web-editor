@@ -85,8 +85,8 @@ before(async () => {
   wasm = randomBytes(250_000);
   const parts = [];
   for (let i = 0, n = 0; i < wasm.length; i += 100_000, n++) {
-    writeFileSync(join(assets, 'engine', `godot.editor.wasm.${n}`), wasm.subarray(i, i + 100_000));
-    parts.push(`godot.editor.wasm.${n}`);
+    writeFileSync(join(assets, 'engine', `godot.editor.${n}.wasm`), wasm.subarray(i, i + 100_000));
+    parts.push(`godot.editor.${n}.wasm`);
   }
   writeFileSync(join(assets, 'engine', 'wasm-manifest.json'), JSON.stringify({ size: wasm.length, sha256: createHash('sha256').update(wasm).digest('hex'), parts }));
   writeFileSync(join(assets, '_headers'), '/*\n  Cross-Origin-Opener-Policy: same-origin\n  Cross-Origin-Embedder-Policy: require-corp\n');
