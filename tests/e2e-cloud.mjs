@@ -200,7 +200,7 @@ try {
   check('에디터 브리지 연결, 메인 씬 인식', status.editor_ready === true && status.editor?.main_scene === 'main.tscn', JSON.stringify(status.editor));
 
   // 3. 파일 쓰기 → 자동 커밋 (사용자 토큰)
-  const pushedAddon = await waitFor(() => gh.text('addons/web_editor_bridge/plugin.gd'), 30000);
+  const pushedAddon = await waitFor(() => gh.text('addons/web_editor_bridge/plugin.gd'), 60000); // 자동 저장 주기(30초)보다 넉넉히
   check('브리지 애드온이 Worker를 거쳐 커밋됨', !!pushedAddon);
   const w = await ai(() => window.godotAI.writeFiles([{ path: 'hello.gd', content: 'extends Node\n# from cloud\n' }], 'cloud e2e'));
   check('AI 쓰기 성공', w.written?.length === 1, JSON.stringify(w));
@@ -273,7 +273,37 @@ try {
   check('실행 후 게임이 종료됨', afterRun.data?.playing === false, JSON.stringify(afterRun.data ?? afterRun).slice(0, 120));
   await mcpCall(token, 'delete_files', { paths: ['broken.gd', 'tests/test_demo.gd'] });
 
-  // 8. 로그아웃 → 다시 로그인 화면
+  // 8. 안전장치: 파일을 한꺼번에 많이 지우는 저장은 자동으로 올리지 않는다
+  const bulk = Array.from({ length: 12 }, (_, i) => ({ path: `bulk/f${i}.gd`, content: `extends Node\n# ${i}\n` }));
+  await mcpCall(token, 'write_files', { files: bulk, commit_message: 'bulk' });
+  await waitFor(() => gh.text('bulk/f11.gd'), 45000);
+  const tracked = Object.keys(gh.files()).length;
+  await mcpCall(token, 'delete_files', { paths: bulk.map((f) => f.path) });
+  const mcpSave = await mcpCall(token, 'sync_now');
+  check('대량 삭제는 MCP sync_now로도 올라가지 않음 (사람 확인 필요)', mcpSave.data?.blocked === true && mcpSave.data?.deletes === 12, JSON.stringify(mcpSave.data ?? mcpSave).slice(0, 160));
+  await sleep(40000);
+  check('자동 저장이 대량 삭제를 올리지 않음', !!gh.text('bulk/f0.gd') && Object.keys(gh.files()).length === tracked, `원격 파일 ${Object.keys(gh.files()).length}/${tracked}`);
+  await page.click('#btn-save'); // 확인 창은 자동으로 "확인"
+  const bulkGone = await waitFor(() => !gh.text('bulk/f0.gd'), 30000);
+  check("'지금 저장'에서 확인하면 삭제가 올라감", !!bulkGone, gh.lastCommitMessage()?.split('\n')[0]);
+
+  // 9. 브라우저 저장소(IndexedDB)가 사라져도 파일을 지우지 않고 GitHub에서 다시 받음 (동기화 기록은 남은 상태)
+  const before = Object.keys(gh.files()).sort();
+  const headBefore = gh.head();
+  await page.goto(`${BASE}/favicon.png`);
+  await page.evaluate(() => new Promise((res) => {
+    const req = indexedDB.deleteDatabase('/home/web_user');
+    req.onsuccess = req.onerror = req.onblocked = () => res();
+  }));
+  await page.goto(`${BASE}/?autosave=3&poll=3&status=2`);
+  await page.waitForSelector('body[data-ready="true"]', { timeout: 240000 });
+  await sleep(10000);
+  const after = Object.keys(gh.files()).sort();
+  check('저장소가 사라져도 원격 파일을 지우지 않음', JSON.stringify(after) === JSON.stringify(before), `${before.length} → ${after.length}, head ${headBefore === gh.head() ? '그대로' : '바뀜: ' + gh.lastCommitMessage()?.split('\n')[0]}`);
+  const restored = await ai(() => window.godotAI.readFile('main.tscn').then((r) => r.content).catch((e) => String(e)));
+  check('GitHub에서 다시 받아 에디터에 파일이 있음', /\[node name="Main"/.test(restored ?? ''), String(restored).slice(0, 60));
+
+  // 10. 로그아웃 → 다시 로그인 화면
   await page.click('#btn-settings');
   await page.click('#btn-logout');
   await page.waitForSelector('#login[open]', { timeout: 60000 });

@@ -171,7 +171,14 @@ async function connectCloud({ onLoggedIn } = {}) {
 function bindToolbar({ api, sync, panel, cloud }) {
   $('#btn-save').addEventListener('click', async () => {
     try {
-      const r = await api.call('sync_now');
+      let r = await api.call('sync_now');
+      if (r.blocked) {
+        const sample = r.paths.slice(0, 10).join('\n  ');
+        const ok = confirm(`이 저장은 파일 ${r.deletes}개를 GitHub에서 삭제합니다.\n\n  ${sample}${r.deletes > 10 ? '\n  ...' : ''}\n\n정말 지운 파일이 맞나요? (실수라면 취소하고 '설정 → 이 브라우저의 프로젝트 사본 지우고 다시 받기'를 쓰세요)`);
+        if (!ok) return;
+        const res = await sync.push(undefined, { allowMassDelete: true });
+        r = res.commit ? { commit: res.commit, short: res.commit.slice(0, 7), files: res.files } : { commit: null };
+      }
       toast(r.commit ? `저장했습니다: 커밋 ${r.short} (파일 ${r.files.length}개)` : '올릴 변경이 없습니다');
     } catch (e) {
       toast(`저장 실패: ${e.message}`, 'error');
