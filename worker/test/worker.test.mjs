@@ -69,6 +69,7 @@ async function waitReady(url, ms = 60000) {
 before(async () => {
   gh = new FakeGitHub({ owner: 'tester', repo: 'game' });
   oauth = gh.enableOAuth({ clientId: 'cid', clientSecret: 'csecret' });
+  gh.requireUserAgent = true; // Worker가 GitHub에 보내는 모든 요청에 User-Agent가 있어야 함
   // GitHub App 비공개 키: GitHub처럼 PKCS#1 PEM으로 (Worker가 PKCS#8로 바꿔 읽는지 확인)
   const { publicKey, privateKey } = generateKeyPairSync('rsa', { modulusLength: 2048 });
   appKeyPem = privateKey.export({ type: 'pkcs1', format: 'pem' });
