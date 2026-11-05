@@ -88,6 +88,15 @@ async function connect(dev) {
 
 const PICK_KEY = 'gwe:pick-project';
 
+/** 서비스 워커가 이 페이지를 맡을 때까지 잠깐 기다린다 (처음 방문 직후에는 아직 없을 수 있음) */
+async function waitForServiceWorker(timeoutMs = 5000) {
+  if (!('serviceWorker' in navigator) || navigator.serviceWorker.controller) return;
+  await Promise.race([
+    new Promise((resolve) => navigator.serviceWorker.addEventListener('controllerchange', resolve, { once: true })),
+    new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+  ]);
+}
+
 async function getJson(path) {
   const res = await fetch(path, { cache: 'no-store', headers: { Accept: 'application/json' } });
   if (res.status === 401) return { unauthorized: true };
@@ -271,8 +280,16 @@ async function main() {
   const dev = devOptions();
   // 엔진(wasm) 다운로드를 미리 시작. 크기를 알려 주면 서버가 압축 전송(Content-Length 없음)해도 진행률이 보인다.
   // 클라우드 모드는 로그인 확인 뒤에 시작한다 (로그인 화면에서 GitHub로 이동하면 100MB 다운로드가 버려지므로)
-  const preloadEngine = () => Engine.load('godot.editor', build.wasmSize || 0);
   const cloud = build.mode === 'cloud';
+  let enginePreload = null;
+  const preloadEngine = () => {
+    // 클라우드 버전: 서비스 워커가 페이지를 맡은 뒤에 받는다 (서비스 워커가 엔진 조각을 직접 받아 이어 붙임)
+    // (다운로드 완료를 기다리지는 않는다: 진행률은 host.init이 보여 줌)
+    enginePreload ??= (cloud ? waitForServiceWorker() : Promise.resolve()).then(() => {
+      Engine.load('godot.editor', build.wasmSize || 0);
+    });
+    return enginePreload;
+  };
   if (!cloud) preloadEngine();
   if (cloud) {
     // 클라우드 모드: MCP 연결은 같은 주소의 Worker에 자동으로 하므로 수동 설정 칸을 숨긴다
@@ -312,6 +329,7 @@ async function main() {
   const host = new GodotHost({ editorCanvas: $('#editor-canvas'), gameCanvas: $('#game-canvas'), gameLayer: $('#game-layer'), logs });
   app.host = host;
   setLoading('Godot 에디터 내려받는 중…', 0);
+  await preloadEngine();
   await host.init((current, total) => {
     if (total > 0) setLoading(`Godot 에디터 내려받는 중… ${Math.round((current / total) * 100)}%`, current / total);
     else setLoading('Godot 에디터 준비 중…');

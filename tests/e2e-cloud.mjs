@@ -164,6 +164,8 @@ try {
   await page.click('#picker-open');
   await page.waitForSelector('body[data-ready="true"]', { timeout: Number(process.env.READY_TIMEOUT ?? 240000) });
   log('에디터 준비 완료');
+  const viaWorker = (wranglerOut.match(/GET \/godot\.editor\.wasm/g) ?? []).length;
+  check('엔진은 서비스 워커가 조각을 직접 받아 이어 붙임 (Worker 이어 붙이기 경로 안 씀)', viaWorker === 0, `Worker 경로 요청 ${viaWorker}회`);
 
   const secrets = await ai(() => ({ cookie: document.cookie, local: JSON.stringify(localStorage), session: JSON.stringify(sessionStorage) }));
   check('세션 쿠키와 GitHub 토큰이 페이지 JS에 보이지 않음', !/gwe_sid|ghu_|ghr_/.test(JSON.stringify(secrets)), JSON.stringify(secrets).slice(0, 200));
