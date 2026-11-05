@@ -1,0 +1,85 @@
+# 브라우저 E2E (실제 Godot 웹 에디터 + 로컬 Worker + 가짜 GitHub) 와 테스트 실행기(진짜 Godot 헤드리스) 검증
+# 배포와는 별개로, 에디터/동기화/MCP/실행기가 바뀌면 돈다. 실패하면 스크린샷·로그를 test-results 아티팩트로 남긴다.
+name: E2E
+
+on:
+  push:
+    branches: [main]
+    paths: ['web/**', 'worker/**', 'scripts/**', 'tests/**', 'package*.json', '.github/workflows/e2e.yml']
+  pull_request:
+    paths: ['web/**', 'worker/**', 'scripts/**', 'tests/**', 'package*.json', '.github/workflows/e2e.yml']
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: e2e-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  GODOT_VERSION: 4.7.2
+
+jobs:
+  browser:
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            worker/package-lock.json
+      - name: Godot 웹 에디터 캐시
+        uses: actions/cache@v4
+        with:
+          path: .cache
+          key: godot-web-editor-${{ hashFiles('scripts/build.sh') }}
+      - name: Playwright 브라우저 캐시
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/ms-playwright
+          key: playwright-${{ hashFiles('package-lock.json') }}
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: npm ci
+        working-directory: worker
+      - name: 빌드 (dist-worker, dist-mirror)
+        run: scripts/build-worker.sh
+      - name: 클라우드 흐름 (로그인, 엔진 미러, MCP 실시간/GitHub 경로)
+        run: node tests/e2e-cloud.mjs test-results
+      - name: 에디터 동작 (동기화, AI 도구, 원격 반영, 게임 실행, 새로고침)
+        if: success() || failure()
+        run: node tests/e2e-editor.mjs test-results
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: e2e-results
+          path: test-results
+          retention-days: 7
+
+  runner:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Godot 캐시
+        id: godot-cache
+        uses: actions/cache@v4
+        with:
+          path: ~/godot
+          key: godot-${{ env.GODOT_VERSION }}-linux
+      - name: Godot 내려받기
+        if: steps.godot-cache.outputs.cache-hit != 'true'
+        run: |
+          mkdir -p ~/godot && cd ~/godot
+          curl -fsSL --retry 3 -o g.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          unzip -q g.zip && rm g.zip
+      - name: 테스트 실행기 (cli.gd test/check)
+        run: GODOT_BIN=~/godot/Godot_v${GODOT_VERSION}-stable_linux.x86_64 node --test tests/runner-cli.test.mjs

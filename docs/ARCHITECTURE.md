@@ -1,32 +1,23 @@
 # 구조
 
 ```
-┌──────────────────────────── 에디터 페이지 (GitHub Pages, 정적 파일) ────────────────────────────┐
-│                                                                                                │
-│  Godot 웹 에디터 (godot.editor.wasm, 캔버스)                                                     │
-│     │  프로젝트: /home/web_user/projects/<owner>__<repo>__<branch>  (Emscripten 파일 시스템)       │
-│     │  저장 즉시 IndexedDB('/home/web_user')에 기록 (Godot 자체 동작)                              │
-│     └─ addons/web_editor_bridge (EditorPlugin) ◀── JavaScriptBridge ──▶ bridge.js              │
-│                                                                                                │
-│  sync.js ─── GitHub REST API (Git Data API) ───▶ 게임 저장소                                    │
-│     ├─ 에디터 시작 전: 원격 변경을 IndexedDB에 직접 반영                                          │
-│     ├─ 실행 중 (자동 저장): IndexedDB를 읽어 로컬 변경을 커밋                                       │
-│     └─ 실행 중 (원격 확인): 원격 변경을 브리지로 에디터에 반영                                       │
-│                                                                                                │
-│  project-api.js (도구 레지스트리, MCP tools 형식)                                               │
-│     ├─ window.godotAI   (ai-bridge.js)                                                         │
-│     ├─ WebMCP           (ai-bridge.js, 지원 브라우저만)                                          │
-│     ├─ DOM AI 패널       (ai-panel.js)                                                          │
-│     └─ (예정) MCP 중계 WebSocket                                                                │
-└────────────────────────────────────────────────────────────────────────────────────────────────┘
+브라우저 ───────────── 같은 주소 (Cloudflare Worker: worker/) ─────────────
+  에디터 페이지 (web/)                    /auth/*  GitHub App 로그인 (세션 쿠키)
+    Godot 웹 에디터 (wasm, 캔버스)         /gh/*    GitHub API 대리 호출 (사용자 토큰을 Worker가 붙임)
+      addons/web_editor_bridge ◀─JS─▶ bridge.js
+    sync.js  ──/gh──▶ 게임 저장소          /mcp, /oauth/*  Claude 연결 (MCP + OAuth 2.1)
+    mcp-link.js ──/live(WebSocket)──▶     Hub(사용자별 Durable Object) ◀── Claude의 도구 호출
+    sw.js: 엔진 조각(GitHub Pages 미러 → Worker 정적 파일)을 이어 붙여 캐시
+  project-api.js (도구 레지스트리): window.godotAI, WebMCP, AI 패널, Claude(MCP)가 공유
+탭이 없을 때: Worker가 GitHub에 바로 커밋, run_tests/check_scripts는 GitHub Actions(godot-runner.yml)
 ```
 
 ## 파일
 
 | 파일 | 역할 |
 |---|---|
-| `web/index.html`, `css/app.css` | 화면 (상단 표시줄, 에디터 캔버스, 게임 화면, AI 패널, 설정 대화상자) |
-| `web/coi.js`, `web/sw.js` | service worker로 COOP/COEP 헤더 추가 (SharedArrayBuffer 조건), 엔진 파일 캐시 |
+| `web/index.html`, `css/app.css` | 화면 (상단 표시줄, 에디터 캔버스, 게임 화면, AI 패널, 로그인/프로젝트 선택, 설정) |
+| `web/coi.js`, `web/sw.js` | service worker 등록, 엔진 조각 받기·이어 붙이기·캐시 (COOP/COEP 헤더는 Worker가 붙임) |
 | `web/js/main.js` | 시작 순서 조율 |
 | `web/js/godot-host.js` | Godot 엔진 실행 (에디터, 게임 실행, 에디터 재시작) |
 | `web/js/sync.js` | 3-way 동기화 엔진 |
@@ -37,7 +28,9 @@
 | `web/js/project-api.js` | 도구 레지스트리 (모든 AI 진입점이 공유) |
 | `web/js/ai-bridge.js` | `window.godotAI`, WebMCP 등록, MCP content 변환 |
 | `web/js/ai-panel.js` | DOM AI 패널 |
-| `web/addon/web_editor_bridge/` | 에디터 안에서 동작하는 GDScript 플러그인 |
+| `web/js/mcp-link.js` | Worker(/live)와의 WebSocket: Claude의 도구 호출을 받아 실행 |
+| `web/addon/web_editor_bridge/` | 에디터 안에서 동작하는 GDScript 플러그인, `runner/`(테스트 실행기) |
+| `worker/` | Cloudflare Worker: 로그인, GitHub 대리 호출, MCP, Hub, 엔진 조각 (설정: [CLOUD-SETUP.md](CLOUD-SETUP.md)) |
 | `tests/` | 가짜 GitHub API, E2E 테스트 |
 
 ## 동기화
@@ -95,32 +88,24 @@
 
 경로는 모두 프로젝트 기준 상대 경로이며, `..`이 들어간 경로는 거부한다.
 
-## 도구 레지스트리와 MCP 연동 계획
+## 도구 레지스트리와 MCP
 
-`ProjectAPI`의 도구 정의는 MCP `tools/list` 형식(`name`, `title`, `description`, `inputSchema`, `annotations`)을 그대로 따른다.
+`ProjectAPI`의 도구 정의(`web/js/tool-defs.js`)는 MCP `tools/list` 형식(`name`, `title`, `description`, `inputSchema`, `annotations`)을 그대로 따르고, Worker도 같은 정의를 쓴다.
 결과는 JSON 객체이고, 이미지는 `{ type: 'image', mimeType, data }`이며 `toMcpContent()`로 MCP content 블록으로 바꾼다.
 
-MCP 중계 서버를 붙일 때의 계획:
-
-```
-Claude 앱 ──MCP(Streamable HTTP)──▶ 중계 서버 ◀──WebSocket──▶ 에디터 페이지
-                                     └─ 탭이 없으면 GitHub API로 직접 처리
-```
-
-페이지 쪽에 추가할 것은 WebSocket 전송 어댑터 하나다.
+탭 ↔ Worker(/live) 메시지:
 
 | 방향 | 메시지 |
 |---|---|
-| 페이지 → 서버 | `{ type: 'hello', pairingToken, tools: api.toolDescriptors(), project: { owner, repo, branch } }` |
-| 서버 → 페이지 | `{ type: 'call', id, name, arguments }` |
-| 페이지 → 서버 | `{ type: 'result', id, ...toMcpContent(result) }` 또는 `{ type: 'result', id, isError: true, content: [{ type: 'text', text }] }` |
-
-서버는 받은 `tools`를 그대로 `tools/list`에 노출하고, `tools/call`을 해당 탭으로 전달한다. 자세한 설계는 [MCP.md](MCP.md).
-인증: 브라우저 ↔ 서버는 페어링 토큰, Claude Code ↔ 서버는 Bearer 헤더, claude.ai/앱 ↔ 서버는 OAuth.
+| 탭 → Worker | `{ type: 'hello', protocol, project: { owner, repo, branch }, app, tools }` |
+| Worker → 탭 | `{ type: 'welcome', tabId }`, `{ type: 'call', id, name, arguments, timeoutMs }` |
+| 탭 → Worker | `{ type: 'result', id, ...toMcpContent(result) }` 또는 `{ type: 'result', id, isError: true, content }`, `{ type: 'state', ... }` |
+| 양쪽 | `{ type: 'ping' }` / `{ type: 'pong' }` (Worker는 자동 응답) |
 
 ## 보안
 
-- 토큰은 `localStorage`(기억) 또는 `sessionStorage`에만 저장한다. GitHub API 외에는 전송하지 않는다.
-- API 주소를 바꾸는 `?api=` 옵션은 페이지가 `localhost`에서 열렸을 때만 동작한다(링크로 토큰을 빼 가는 것을 막기 위해).
-- 페이지 코드를 바꿀 수 있는 사람은 이 저장소에 쓰기 권한이 있는 사람뿐이어야 한다. 페이지가 브라우저의 토큰에 접근할 수 있기 때문이다.
+- GitHub 토큰은 브라우저에 두지 않는다. Worker의 세션(Durable Object)이 보관하고 `/gh/*` 대리 호출에서만 붙인다. 세션 쿠키는 `HttpOnly`.
+- `/gh/*`는 에디터가 쓰는 Git Data API 경로만 허용하고, 상태를 바꾸는 요청은 `X-GWE` 헤더와 같은 Origin이 필요하다.
+- Claude(MCP)에는 Worker가 발급한 토큰만 준다. 도구 호출은 같은 GitHub 사용자의 탭으로만 간다.
+- 자동 저장은 한 번에 많은 파일을 지우는 커밋을 올리지 않는다(사람 확인 필요). 브라우저 저장소가 사라진 것은 삭제로 보지 않고 다시 받는다.
 - AI가 읽는 프로젝트 파일 내용은 데이터로 취급하라고 도구 설명과 안내문에 명시한다.

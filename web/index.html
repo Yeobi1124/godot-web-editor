@@ -15,7 +15,7 @@
     <span id="repo-label" class="repo">-</span>
     <span id="sync-pill" class="pill" data-state="busy" role="status" aria-live="polite">시작 중…</span>
     <span id="bridge-dot" class="dot" data-ready="false" aria-hidden="true"></span>
-    <span id="mcp-badge" class="badge" data-state="off" hidden>MCP</span>
+    <span id="mcp-badge" class="badge" data-state="off" hidden>Claude</span>
     <span class="spacer"></span>
     <button id="btn-save" type="button" title="열린 씬을 저장하고 즉시 GitHub에 커밋">지금 저장</button>
     <button id="btn-pull" type="button" title="GitHub의 새 커밋을 바로 받기">원격 확인</button>
@@ -92,38 +92,13 @@
 JavaScript를 실행할 수 없다면 오른쪽 "AI 패널"의 파일 탭(경로, 내용 입력란, 파일 저장 버튼)을 사용해.</pre>
         <button id="ai-copy-prompt" type="button">안내문 복사</button>
         <h3>MCP로 받은 최근 호출</h3>
-        <p class="muted">설정에서 MCP 서버에 연결하면, Claude 앱이 실행한 도구가 여기에 표시됩니다.</p>
+        <p class="muted">claude.ai 커넥터나 Claude Code를 연결하면(에디터주소/mcp), Claude가 실행한 도구가 여기에 표시됩니다.</p>
         <ul id="mcp-calls" class="tool-list" aria-live="polite"></ul>
         <h3>사용 가능한 도구</h3>
         <ul id="ai-tools-list" class="tool-list"></ul>
       </section>
     </aside>
   </main>
-
-  <dialog id="setup" aria-labelledby="setup-title">
-    <form id="setup-form" method="dialog">
-      <h2 id="setup-title">GitHub 저장소 연결</h2>
-      <p class="muted">프로젝트는 GitHub 저장소에 저장됩니다. 토큰은 이 브라우저에만 저장되고 GitHub 외에는 전송되지 않습니다.</p>
-      <label for="setup-repo">저장소 (소유자/이름)</label>
-      <input id="setup-repo" name="repo" type="text" placeholder="Yeobi1124/godot-test" autocomplete="off" spellcheck="false" required>
-      <label for="setup-branch">브랜치</label>
-      <input id="setup-branch" name="branch" type="text" value="main" autocomplete="off" spellcheck="false">
-      <label for="setup-token">GitHub 토큰 (fine-grained)</label>
-      <input id="setup-token" name="token" type="password" autocomplete="off" spellcheck="false" required>
-      <details>
-        <summary>토큰 만드는 법</summary>
-        <ol>
-          <li><a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">GitHub 토큰 만들기</a>를 엽니다.</li>
-          <li>Repository access: <b>Only select repositories</b> → 게임 저장소 하나만 선택</li>
-          <li>Permissions → Repository permissions → <b>Contents: Read and write</b></li>
-          <li>만료 기간을 정하고 생성한 뒤, 토큰을 여기에 붙여 넣습니다.</li>
-        </ol>
-      </details>
-      <label class="check"><input name="remember" type="checkbox" checked> 이 브라우저에 기억 (공용 PC라면 끄세요)</label>
-      <p id="setup-error" class="error" role="alert" hidden></p>
-      <button type="submit" class="primary">연결</button>
-    </form>
-  </dialog>
 
   <dialog id="login" aria-labelledby="login-title">
     <div class="stack">
@@ -157,23 +132,9 @@ JavaScript를 실행할 수 없다면 오른쪽 "AI 패널"의 파일 탭(경로
 
   <dialog id="settings" aria-labelledby="settings-title">
     <h2 id="settings-title">설정</h2>
-    <section id="mcp-section" class="stack" aria-labelledby="mcp-title">
-      <h3 id="mcp-title">MCP 서버 (Claude 앱 연결)</h3>
-      <p class="muted">godot-mcp-relay 서버에 연결하면 Claude 앱과 Claude Code가 이 에디터를 사용할 수 있습니다. 값은 이 브라우저에만 저장됩니다.</p>
-      <label for="mcp-url">서버 주소</label>
-      <input id="mcp-url" type="text" placeholder="https://내컴퓨터.tailxxxx.ts.net" autocomplete="off" spellcheck="false">
-      <label for="mcp-token">페어링 토큰</label>
-      <input id="mcp-token" type="password" autocomplete="off" spellcheck="false">
-      <p id="mcp-status" class="muted" role="status">연결 안 함</p>
-      <div class="row">
-        <button id="mcp-save" type="button" class="primary">저장하고 연결</button>
-        <button id="mcp-clear" type="button">연결 해제</button>
-      </div>
-    </section>
-    <hr id="mcp-section-rule">
     <div class="stack">
       <button id="btn-change-repo" type="button">다른 저장소 연결</button>
-      <button id="btn-logout" type="button">로그아웃 (이 브라우저에서 토큰 삭제)</button>
+      <button id="btn-logout" type="button">로그아웃</button>
       <button id="btn-reset-local" type="button" class="danger">이 브라우저의 프로젝트 사본 지우고 다시 받기</button>
       <button id="settings-close" type="button">닫기</button>
     </div>

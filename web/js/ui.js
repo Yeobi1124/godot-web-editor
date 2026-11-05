@@ -61,38 +61,7 @@ export function renderStatus(status, { repoLabel, bridgeReady }) {
   $('#bridge-dot').title = bridgeReady ? '에디터 브리지 연결됨 (AI 도구 사용 가능)' : '에디터 브리지 대기 중';
 }
 
-/** 저장소/토큰 설정 대화상자. 제출되면 { owner, repo, branch, token, remember } */
-export function askSettings(initial = {}, errorText = '') {
-  const dlg = $('#setup');
-  const form = $('#setup-form');
-  form.repo.value = initial.owner && initial.repo ? `${initial.owner}/${initial.repo}` : '';
-  form.branch.value = initial.branch || 'main';
-  form.token.value = '';
-  form.remember.checked = initial.remember ?? true;
-  $('#setup-error').textContent = errorText;
-  $('#setup-error').hidden = !errorText;
-  dlg.showModal();
-  return new Promise((resolve) => {
-    form.onsubmit = (e) => {
-      e.preventDefault();
-      const m = form.repo.value.trim().replace(/^https?:\/\/github\.com\//, '').replace(/\.git$/, '').match(/^([\w.-]+)\/([\w.-]+)$/);
-      if (!m) {
-        $('#setup-error').textContent = '저장소는 "소유자/이름" 형식으로 입력하세요. 예: Yeobi1124/godot-test';
-        $('#setup-error').hidden = false;
-        return;
-      }
-      if (!form.token.value.trim()) {
-        $('#setup-error').textContent = 'GitHub 토큰을 입력하세요.';
-        $('#setup-error').hidden = false;
-        return;
-      }
-      dlg.close();
-      resolve({ owner: m[1], repo: m[2], branch: form.branch.value.trim() || 'main', token: form.token.value.trim(), remember: form.remember.checked });
-    };
-  });
-}
-
-/** 클라우드 모드 로그인 화면. 버튼은 /auth/login으로 이동하므로 이 함수는 끝나지 않는다 */
+/** 로그인 화면. 버튼은 /auth/login으로 이동하므로 이 함수는 끝나지 않는다 */
 export function askLogin(errorText = '') {
   setLoading(null);
   const dlg = $('#login');
@@ -104,7 +73,7 @@ export function askLogin(errorText = '') {
 }
 
 /**
- * 클라우드 모드 프로젝트 선택 화면.
+ * 프로젝트 선택 화면.
  * repos: [{ owner, name, full_name, default_branch, private, can_push }]
  * 선택하면 { owner, repo, branch }. onRefresh()는 새 { repos } 를, onLogout()은 로그아웃을 처리한다.
  */

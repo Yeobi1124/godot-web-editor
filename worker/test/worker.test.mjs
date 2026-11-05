@@ -327,7 +327,7 @@ async function openTab(b, project = { owner: 'tester', repo: 'game', branch: 'ma
     ws.on('open', r);
     ws.on('error', j);
   });
-  ws.send(JSON.stringify({ type: 'hello', protocol: 1, pairingToken: 'session', project, app: { kind: 'browser' }, tools: [] }));
+  ws.send(JSON.stringify({ type: 'hello', protocol: 1, project, app: { kind: 'browser' }, tools: [] }));
   await next((m) => m.type === 'welcome');
   return { ws, next, send: (m) => ws.send(JSON.stringify(m)) };
 }

@@ -1,6 +1,6 @@
 // 사용자 한 명 = Hub 하나 (이름: "user:<GitHub 사용자 id>").
 // 그 사용자가 연 웹 에디터 탭들의 WebSocket을 들고 있다가, MCP 도구 호출을 알맞은 탭으로 전달한다.
-// 탭 쪽 프로토콜은 중계 서버와 같다 (web/js/mcp-link.js, docs/MCP.md 3장): hello → welcome, call → result, state, ping/pong
+// 탭 쪽 프로토콜 (web/js/mcp-link.js): hello → welcome, call → result, state, ping/pong
 //
 // WebSocket Hibernation API를 쓰므로 탭을 오래 열어 두어도 이 객체는 잠들어 있다(비용 거의 없음).
 // ping/pong은 자동 응답이라 객체를 깨우지 않는다.

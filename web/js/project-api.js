@@ -3,9 +3,9 @@
 //   window.godotAI (페이지 JS)        ─┐
 //   WebMCP (navigator.modelContext)  ─┼─> ProjectAPI.call(name, args)
 //   DOM AI 패널                       ─┤
-//   MCP 중계 서버 (mcp-link.js)        ─┘
+//   Claude (MCP, Worker → mcp-link.js) ─┘
 //
-// 도구의 이름/설명/스키마는 tool-defs.js(중계 서버와 공용)에 있고, 여기서는 브라우저 쪽 처리만 붙인다.
+// 도구의 이름/설명/스키마는 tool-defs.js(Worker와 공용)에 있고, 여기서는 브라우저 쪽 처리만 붙인다.
 // 결과는 JSON 직렬화 가능한 객체이며, 이미지는 { type: 'image', mimeType, data(base64) } 형태로 돌려준다.
 
 import * as idb from './idbfs.js';
