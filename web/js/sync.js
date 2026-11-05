@@ -19,6 +19,21 @@ const WARN_FILE_BYTES = 50 * 1024 * 1024;
 const BRIDGE_BATCH_BYTES = 8 * 1024 * 1024; // 브리지 한 번에 보내는 최대 크기
 const DEFAULT_GITIGNORE = '# Godot 4+ specific ignores\n.godot/\n/android/\n';
 
+// 자동 저장 안전장치: 한 번에 이만큼 지우는 저장은 사람이 확인해야 올린다
+// (브라우저 저장소가 사라진 것을 "사용자가 지움"으로 착각해 파일을 대량 삭제한 사고 재발 방지)
+const MASS_DELETE_MIN = 10;
+const MASS_DELETE_RATIO = 0.25;
+// 에디터를 열 때 기준점에 있던 파일이 이 비율 이상 로컬에 없으면 "브라우저 저장소가 사라졌다"고 본다
+const LOST_STORE_RATIO = 0.5;
+
+export class MassDeleteError extends Error {
+  constructor(paths) {
+    super(`파일 ${paths.length}개를 지우는 저장이라 자동으로 올리지 않았습니다. 의도한 삭제라면 '지금 저장'을 눌러 확인하세요.`);
+    this.name = 'MassDeleteError';
+    this.paths = paths;
+  }
+}
+
 export class SyncEngine extends EventTarget {
   #mutex = new Mutex();
   #hashCache = new Map(); // path -> { timestamp, size, sha }
@@ -145,8 +160,20 @@ export class SyncEngine extends EventTarget {
       const remote = await this.#fetchRemote();
       const ignore = await this.#ignoreForRemote(remote.files);
       const local = await this.localSnapshot(ignore);
-      const hasBase = this.state.base !== null;
-      const base = hasBase ? { ...this.state.base } : {};
+      let hasBase = this.state.base !== null;
+      let base = hasBase ? { ...this.state.base } : {};
+      if (hasBase) {
+        // 기준점에 있던 파일이 로컬에서 대부분(또는 project.godot가) 사라졌으면, 사용자가 지운 게 아니라
+        // 브라우저 저장소(IndexedDB)가 정리된 것으로 본다 → 지우지 않고 처음 열 때처럼 GitHub에서 다시 받는다
+        const tracked = Object.keys(base).filter((p) => !ignore.ignores(p));
+        const missing = tracked.filter((p) => !local.has(p));
+        const lostProject = !!base['project.godot'] && !local.has('project.godot');
+        if (missing.length && (lostProject || (tracked.length >= MASS_DELETE_MIN && missing.length / tracked.length >= LOST_STORE_RATIO))) {
+          this.logs.error(`이 브라우저에 저장된 프로젝트 파일 ${missing.length}개가 사라져 있습니다(브라우저 저장소 정리 등). 삭제로 보지 않고 GitHub에서 다시 받습니다.`);
+          hasBase = false;
+          base = {};
+        }
+      }
 
       const toWrite = [];
       const toDelete = [];
@@ -366,22 +393,31 @@ export class SyncEngine extends EventTarget {
     return verified;
   }
 
-  push(message) {
+  /**
+   * 로컬 변경을 커밋한다. 파일을 많이 지우는 저장은 MassDeleteError로 멈추고(자동 저장도 멈춤),
+   * 사람이 확인한 뒤 allowMassDelete: true로 다시 부를 때만 올린다.
+   */
+  push(message, { allowMassDelete = false } = {}) {
     return this.#mutex.run(async () => {
       this.#emit({ phase: 'pushing' });
       try {
-        const result = await this.#doPush(message, 0);
-        this.#emit({ phase: 'idle', lastError: null, ...(result.commit ? { lastPush: Date.now() } : {}) });
+        const result = await this.#doPush(message, 0, allowMassDelete);
+        this.blockedDeletes = null;
+        this.#emit({ phase: 'idle', lastError: null, blockedDeletes: null, ...(result.commit ? { lastPush: Date.now() } : {}) });
         await this.refreshStatus();
         return result;
       } catch (e) {
-        this.#emit({ phase: 'error', lastError: e.message });
+        if (e instanceof MassDeleteError) {
+          this.blockedDeletes = e.paths;
+          this.logs.error(`${e.message} (예: ${e.paths.slice(0, 5).join(', ')})`);
+        }
+        this.#emit({ phase: 'error', lastError: e.message, ...(e instanceof MassDeleteError ? { blockedDeletes: e.paths } : {}) });
         throw e;
       }
     });
   }
 
-  async #doPush(message, attempt) {
+  async #doPush(message, attempt, allowMassDelete = false) {
     let local = await this.localSnapshot();
     let changes = this.#diffLocal(local);
     if (!changes.length) return { commit: null, files: [] };
@@ -407,6 +443,11 @@ export class SyncEngine extends EventTarget {
     }
     if (!entries.length) return { commit: null, files: [] };
 
+    const deletes = entries.filter((e) => !e.sha).map((e) => e.path);
+    const tracked = Object.keys(this.state.base ?? {}).length;
+    const massDelete = deletes.includes('project.godot') || (deletes.length >= MASS_DELETE_MIN && deletes.length >= tracked * MASS_DELETE_RATIO);
+    if (massDelete && !allowMassDelete) throw new MassDeleteError(deletes);
+
     await mapLimit(entries.filter((e) => e.bytes), 4, async (e) => {
       const sha = await this.gh.createBlob(e.bytes);
       if (sha !== e.sha) throw new Error(`업로드한 파일의 해시가 다릅니다: ${e.path}`);
@@ -417,7 +458,7 @@ export class SyncEngine extends EventTarget {
       await this.gh.updateBranch(this.branch, commit);
     } catch (e) {
       // 그 사이 다른 곳에서 커밋됨 -> 받아서 다시 시도 (1회)
-      if (e instanceof GitHubError && e.status === 422 && attempt < 1) return this.#doPush(message, attempt + 1);
+      if (e instanceof GitHubError && e.status === 422 && attempt < 1) return this.#doPush(message, attempt + 1, allowMassDelete);
       throw e;
     }
 
@@ -462,6 +503,12 @@ export class SyncEngine extends EventTarget {
     if (autosaveSec > 0) {
       every(autosaveSec, async () => {
         await this.refreshStatus();
+        // 대량 삭제로 멈춘 상태면 사람이 확인할 때까지 자동 저장하지 않는다 (지운 파일이 되돌아오면 다시 자동 저장)
+        if (this.blockedDeletes) {
+          const pending = new Set(this.status.pending);
+          if (this.blockedDeletes.some((p) => pending.has(p))) return;
+          this.blockedDeletes = null;
+        }
         if (this.status.pending.length && this.status.phase !== 'error') await this.push();
       });
     }

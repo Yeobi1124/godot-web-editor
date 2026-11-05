@@ -9,6 +9,7 @@
 // 결과는 JSON 직렬화 가능한 객체이며, 이미지는 { type: 'image', mimeType, data(base64) } 형태로 돌려준다.
 
 import * as idb from './idbfs.js';
+import { MassDeleteError } from './sync.js';
 import { TOOL_DEFS, toDescriptor } from './tool-defs.js';
 import { base64ToBytes, bytesToBase64, looksLikeText, normalizeProjectPath, shortSha, utf8Decode } from './util.js';
 
@@ -247,7 +248,16 @@ export class ProjectAPI extends EventTarget {
     this.#on('sync_now', async ({ message }) => {
       if (this.bridge.ready) await this.bridge.call('save_all').catch(() => {});
       await new Promise((r) => setTimeout(r, 300));
-      const res = await this.sync.push(message);
+      let res;
+      try {
+        res = await this.sync.push(message);
+      } catch (e) {
+        if (e instanceof MassDeleteError) {
+          // AI나 자동 저장은 대량 삭제를 올리지 않는다. 사람이 에디터의 '지금 저장'에서 확인해야 한다
+          return { commit: null, blocked: true, deletes: e.paths.length, paths: e.paths.slice(0, 30), message: e.message };
+        }
+        throw e;
+      }
       return res.commit ? { commit: res.commit, short: shortSha(res.commit), files: res.files } : { commit: null, message: '올릴 변경이 없습니다' };
     });
 
