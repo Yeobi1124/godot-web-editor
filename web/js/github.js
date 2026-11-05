@@ -36,6 +36,7 @@ export class GitHubClient {
         // 토큰이 없으면(클라우드 모드) 세션 쿠키로 인증하고, Worker의 CSRF 검사용 헤더를 붙인다
         ...(this.#token ? { Authorization: `Bearer ${this.#token}` } : { 'X-GWE': '1' }),
         'X-GitHub-Api-Version': '2022-11-28',
+        ...this.extraHeaders,
         ...(body ? { 'Content-Type': 'application/json' } : {}),
       },
       body: body ? JSON.stringify(body) : undefined,

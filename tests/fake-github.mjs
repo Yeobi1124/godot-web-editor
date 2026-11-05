@@ -253,6 +253,14 @@ export class FakeGitHub {
     }
     if (!this.#authorized(req.headers.authorization)) return send(401, { message: 'Bad credentials' });
     this.lastAuthorization = req.headers.authorization;
+    this.userAgents ??= [];
+    this.userAgents.push(req.headers['user-agent'] ?? '');
+    // 진짜 GitHub처럼 User-Agent가 없는 API 요청은 거부한다 (Worker에서 빠뜨리기 쉬움)
+    if (this.requireUserAgent && !req.headers['user-agent']) {
+      res.writeHead(403, { 'Content-Type': 'text/plain' });
+      res.end('Request forbidden by administrative rules. Please make sure your request has a User-Agent header');
+      return undefined;
+    }
     if (this.oauth && req.method === 'GET') {
       const repoJson = () => ({
         full_name: `${this.owner}/${this.repo}`,
