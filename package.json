@@ -1,13 +1,16 @@
 {
   "name": "godot-web-editor",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "private": true,
-  "description": "GitHub 저장소와 자동 동기화되는 브라우저용 Godot 에디터 (AI 연동 준비)",
+  "description": "GitHub 저장소와 자동 동기화되는 브라우저용 Godot 에디터 (Cloudflare Worker, Claude MCP 연동)",
   "type": "module",
   "scripts": {
-    "build": "scripts/build.sh",
-    "serve": "node tools/serve.mjs 8060 dist",
-    "test": "scripts/build.sh && node tests/e2e.mjs"
+    "build": "scripts/build-worker.sh",
+    "test:e2e": "node tests/e2e-cloud.mjs && node tests/e2e-editor.mjs",
+    "test:runner": "node --test tests/runner-cli.test.mjs"
+  },
+  "devDependencies": {
+    "playwright": "1.63.0"
   },
   "license": "MIT"
 }

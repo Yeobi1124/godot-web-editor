@@ -66,20 +66,18 @@ await godotAI.run(); await godotAI.logs({ level: 'error' }); await godotAI.stop(
 ## 개발
 
 ```bash
-scripts/build-worker.sh        # dist-worker/ 생성: 공식 Godot 웹 에디터(체크섬 고정) + web/ + 엔진 조각, 헤더, mode=cloud
+npm ci && npx playwright install chromium   # E2E용 브라우저 (처음 한 번)
+scripts/build-worker.sh        # dist-worker/ 생성: 공식 Godot 웹 에디터(체크섬 고정) + web/ + 엔진 조각, 헤더
 (cd worker && npm ci && npm test)   # Worker 통합 테스트 (wrangler dev + 가짜 GitHub OAuth)
 node tests/e2e-cloud.mjs       # 브라우저 E2E: 로그인 → 에디터 → 자동 커밋 → 토큰 갱신 → 로그아웃 (playwright 필요)
 ```
 
 `main`에 푸시하면 GitHub Actions(**클라우드 Worker** 워크플로)가 테스트 후 Cloudflare에 배포합니다.
-
-예전 방식(토큰 입력, GitHub Pages, MCP 중계 서버)의 코드와 테스트는 정리할 예정이라 아직 남아 있습니다.
+웹 코드나 Worker가 바뀌는 push와 PR에서는 **E2E** 워크플로가 실제 Godot 에디터를 헤드리스 Chromium으로 띄워 위 E2E와 실행기 테스트를 돌립니다.
 
 ```bash
-scripts/build.sh               # dist/ (토큰 입력 방식) — node tools/serve.mjs 8060 dist 로 로컬 확인
-node tests/e2e.mjs             # 토큰 입력 방식 E2E
-(cd mcp-server && npm ci && npm test)   # MCP 중계 서버 통합 테스트
-node tests/e2e-mcp.mjs         # MCP 클라이언트 -> 중계 서버 -> 실제 웹 에디터 E2E
+node tests/e2e-editor.mjs      # 에디터 동작 E2E: 원격 반영, AI 패널 입력, 로그, 게임 실행, 새로고침
+GODOT_BIN=<godot 4.7.2> node --test tests/runner-cli.test.mjs   # 테스트 실행기(run_tests/check_scripts) 스크립트
 ```
 
 Godot 버전을 바꾸려면 `scripts/build.sh`의 `GODOT_VERSION`과 `GODOT_ZIP_SHA256`을 함께 고치고 E2E 테스트를 돌리세요.

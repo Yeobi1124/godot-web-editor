@@ -1,8 +1,8 @@
-// 도구 정의 (MCP tools/list 형식). 웹 페이지(ProjectAPI)와 MCP 중계 서버가 함께 사용한다.
+// 도구 정의 (MCP tools/list 형식). 웹 페이지(ProjectAPI)와 Worker(MCP)가 함께 사용한다.
 // 브라우저 전용 API를 쓰지 않는 순수 데이터 모듈이어야 한다 (Node.js에서도 import됨).
 //
-// needsEditor: true  -> 웹 에디터 탭이 열려 있어야 동작 (탭이 없으면 중계 서버가 오류로 응답)
-// needsEditor: false -> 탭이 없을 때 중계 서버가 GitHub 저장소로 직접 처리할 수 있음
+// needsEditor: true  -> 웹 에디터 탭이 열려 있어야 동작 (탭이 없으면 Worker가 안내 오류로 응답)
+// needsEditor: false -> 탭이 없을 때 Worker가 GitHub 저장소(또는 GitHub Actions)로 직접 처리할 수 있음
 
 const READ_ONLY = { readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false };
 const WRITE = { readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false };

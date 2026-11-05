@@ -6,7 +6,7 @@
 //   1. 그 사용자의 열린 에디터 탭이 있으면 탭으로 (모든 도구)
 //   2. 없으면 파일 도구는 사용자 GitHub 토큰으로 저장소에 바로 커밋 (커밋 작성자는 본인)
 //   3. 에디터가 꼭 필요한 도구(스크린샷, 실행 등)는 "에디터를 여세요" 오류
-import { GITHUB_TOOLS, GitHubBackend } from '../../mcp-server/src/github-backend.js';
+import { GITHUB_TOOLS, GitHubBackend } from './github-backend.js';
 import { GitHubClient } from '../../web/js/github.js';
 import { TOOL_DEFS, toDescriptor, toMcpContent } from '../../web/js/tool-defs.js';
 import { NOT_CONFIGURED as RUNNER_NOT_CONFIGURED, runnerConfigured, startRun, waitRun } from './actions-runner.js';

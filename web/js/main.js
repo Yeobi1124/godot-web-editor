@@ -1,5 +1,5 @@
 // 앱 시작 순서:
-//  1. 저장소/토큰 확인 (없으면 설정 화면). 클라우드 모드(Worker)는 GitHub 로그인 → 프로젝트 선택
+//  1. GitHub 로그인(같은 주소의 Cloudflare Worker) → 프로젝트 선택
 //  2. GitHub와 브라우저 저장소 동기화 (에디터 시작 전, IndexedDB에 직접 반영) + 브리지 애드온 설치
 //  3. Godot 에디터 시작 -> 브리지 애드온 연결
 //  4. 자동 저장/원격 확인 시작, AI 진입점(window.godotAI, WebMCP, AI 패널) 준비
@@ -15,9 +15,9 @@ import { LogBuffer } from './logs.js';
 import { McpLink } from './mcp-link.js';
 import { ProjectAPI } from './project-api.js';
 import { loadBundledBridge, planScaffold } from './scaffold.js';
-import { clearToken, devOptions, loadMcpSettings, loadSettings, loadToken, projectDirFor, saveMcpSettings, saveSettings, saveToken } from './settings.js';
+import { devOptions, loadSettings, projectDirFor, saveSettings } from './settings.js';
 import { SyncEngine } from './sync.js';
-import { askLogin, askProject, askSettings, renderStatus, setLoading, showFatal, toast } from './ui.js';
+import { askLogin, askProject, renderStatus, setLoading, showFatal, toast } from './ui.js';
 
 const $ = (sel) => document.querySelector(sel);
 const logs = new LogBuffer();
@@ -49,43 +49,6 @@ async function acquireTabLock(projectDir) {
   });
 }
 
-/** 저장소 설정과 토큰을 확인하고 GitHub 클라이언트를 만든다 */
-async function connect(dev) {
-  let settings = loadSettings();
-  let token = loadToken();
-  let error = '';
-  for (;;) {
-    if (!token || !settings.owner || error) {
-      setLoading(null);
-      const answer = await askSettings(settings, error);
-      settings = answer;
-      token = answer.token;
-    }
-    setLoading('GitHub 저장소 확인 중…');
-    const gh = new GitHubClient({ token, owner: settings.owner, repo: settings.repo, apiBase: dev.apiBase });
-    try {
-      const repo = await gh.getRepo();
-      if (repo.permissions && !repo.permissions.push) {
-        error = `이 토큰으로는 ${settings.owner}/${settings.repo}에 쓸 수 없습니다. 토큰의 Contents 권한을 "Read and write"로 설정하세요.`;
-        continue;
-      }
-      saveSettings(settings);
-      saveToken(token, settings.remember ?? true);
-      return { gh, settings };
-    } catch (e) {
-      if (e instanceof GitHubError && (e.status === 401 || e.status === 403 || e.status === 404)) {
-        error =
-          e.status === 404
-            ? `저장소를 찾을 수 없습니다: ${settings.owner}/${settings.repo} (이름을 확인하거나, 토큰에 이 저장소 접근 권한을 주세요)`
-            : `토큰이 유효하지 않거나 권한이 없습니다 (${e.status}).`;
-        token = null;
-        continue;
-      }
-      throw e;
-    }
-  }
-}
-
 const PICK_KEY = 'gwe:pick-project';
 
 /** 서비스 워커가 이 페이지를 맡을 때까지 잠깐 기다린다 (처음 방문 직후에는 아직 없을 수 있음) */
@@ -111,7 +74,7 @@ async function cloudLogout() {
 }
 
 /**
- * 클라우드 모드: 같은 주소의 Worker에 로그인하고 프로젝트를 고른다.
+ * 같은 주소의 Worker에 로그인하고 프로젝트를 고른다.
  * GitHub 토큰은 브라우저에 없고, GitHubClient는 /gh 로 요청한다(Worker가 세션 토큰을 붙임).
  */
 async function connectCloud({ onLoggedIn } = {}) {
@@ -168,7 +131,7 @@ async function connectCloud({ onLoggedIn } = {}) {
   }
 }
 
-function bindToolbar({ api, sync, panel, cloud }) {
+function bindToolbar({ api, sync, panel }) {
   $('#btn-save').addEventListener('click', async () => {
     try {
       let r = await api.call('sync_now');
@@ -196,13 +159,10 @@ function bindToolbar({ api, sync, panel, cloud }) {
   $('#btn-settings').addEventListener('click', () => $('#settings').showModal());
   $('#btn-logout').addEventListener('click', () => {
     if (sync.status.pending.length && !confirm(`아직 GitHub에 올라가지 않은 파일이 ${sync.status.pending.length}개 있습니다. 그래도 로그아웃할까요?\n(파일은 이 브라우저에 남아 있어 다시 로그인하면 올라갑니다)`)) return;
-    if (cloud) return cloudLogout();
-    clearToken();
-    location.reload();
+    cloudLogout();
   });
   $('#btn-change-repo').addEventListener('click', () => {
-    if (cloud) sessionStorage.setItem(PICK_KEY, '1');
-    else clearToken();
+    sessionStorage.setItem(PICK_KEY, '1');
     location.reload();
   });
   $('#btn-reset-local').addEventListener('click', async () => {
@@ -216,16 +176,15 @@ function bindToolbar({ api, sync, panel, cloud }) {
   $('#settings-close').addEventListener('click', () => $('#settings').close());
 }
 
-/** MCP 연결. 클라우드 모드는 같은 주소의 Worker(/live)에 로그인 쿠키로 자동 연결, 아니면 설정 화면의 중계 서버 */
-function setupMcp({ api, sync, bridge, info, cloud = false }) {
+/** MCP 연결: 같은 주소의 Worker(/live)에 로그인 쿠키로 자동 연결. Claude의 도구 호출이 이 탭으로 온다 */
+function setupMcp({ api, sync, bridge, info }) {
   const mcp = new McpLink({ api, sync, bridge, logs, info });
   const badge = $('#mcp-badge');
   const LABEL = { off: '연결 안 함', connecting: '연결 중…', connected: '연결됨', rejected: '연결 실패' };
   const render = () => {
     badge.hidden = mcp.status === 'off';
     badge.dataset.state = mcp.status;
-    badge.title = `MCP 서버: ${LABEL[mcp.status]}${mcp.detail ? ` — ${mcp.detail}` : ''}`;
-    $('#mcp-status').textContent = `상태: ${LABEL[mcp.status]}${mcp.detail && mcp.detail !== LABEL[mcp.status] ? ` — ${mcp.detail}` : ''}`;
+    badge.title = `Claude 연결(MCP): ${LABEL[mcp.status]}${mcp.detail ? ` — ${mcp.detail}` : ''}`;
   };
   const renderCalls = () => {
     $('#mcp-calls').replaceChildren(
@@ -239,37 +198,7 @@ function setupMcp({ api, sync, bridge, info, cloud = false }) {
   };
   mcp.addEventListener('status', render);
   mcp.addEventListener('call', renderCalls);
-  if (cloud) {
-    mcp.configure({ url: location.origin, token: 'session', path: '/live' });
-    return mcp;
-  }
-  const saved = loadMcpSettings();
-  $('#mcp-url').value = saved.url ?? '';
-  $('#mcp-save').addEventListener('click', () => {
-    const url = $('#mcp-url').value.trim();
-    const token = $('#mcp-token').value.trim() || loadMcpSettings().token;
-    if (!url || !token) {
-      toast('서버 주소와 페어링 토큰을 입력하세요', 'error');
-      return;
-    }
-    try {
-      new URL(url);
-    } catch {
-      toast('서버 주소 형식이 잘못되었습니다. 예: https://my-pc.tail1234.ts.net', 'error');
-      return;
-    }
-    saveMcpSettings({ url, token });
-    $('#mcp-token').value = '';
-    mcp.configure({ url, token });
-  });
-  $('#mcp-clear').addEventListener('click', () => {
-    saveMcpSettings({});
-    $('#mcp-url').value = '';
-    $('#mcp-token').value = '';
-    mcp.configure({});
-  });
-  mcp.configure(saved);
-  render();
+  mcp.configure({ url: location.origin, path: '/live' });
   return mcp;
 }
 
@@ -285,27 +214,18 @@ async function main() {
   }
   const build = await loadBuildInfo();
   const dev = devOptions();
-  // 엔진(wasm) 다운로드를 미리 시작. 크기를 알려 주면 서버가 압축 전송(Content-Length 없음)해도 진행률이 보인다.
-  // 클라우드 모드는 로그인 확인 뒤에 시작한다 (로그인 화면에서 GitHub로 이동하면 100MB 다운로드가 버려지므로)
-  const cloud = build.mode === 'cloud';
+  // 엔진(wasm) 다운로드는 로그인 확인 뒤, 서비스 워커가 페이지를 맡은 다음에 시작한다
+  // (서비스 워커가 엔진 조각을 받아 이어 붙임. 크기를 알려 주면 압축 전송이어도 진행률이 보인다.
+  //  다운로드 완료를 기다리지는 않는다: 진행률은 host.init이 보여 줌)
   let enginePreload = null;
   const preloadEngine = () => {
-    // 클라우드 버전: 서비스 워커가 페이지를 맡은 뒤에 받는다 (서비스 워커가 엔진 조각을 직접 받아 이어 붙임)
-    // (다운로드 완료를 기다리지는 않는다: 진행률은 host.init이 보여 줌)
-    enginePreload ??= (cloud ? waitForServiceWorker() : Promise.resolve()).then(() => {
+    enginePreload ??= waitForServiceWorker().then(() => {
       Engine.load('godot.editor', build.wasmSize || 0);
     });
     return enginePreload;
   };
-  if (!cloud) preloadEngine();
-  if (cloud) {
-    // 클라우드 모드: MCP 연결은 같은 주소의 Worker에 자동으로 하므로 수동 설정 칸을 숨긴다
-    $('#mcp-section').hidden = true;
-    $('#mcp-section-rule').hidden = true;
-    $('#btn-logout').textContent = '로그아웃';
-  }
 
-  const { gh, settings } = cloud ? await connectCloud({ onLoggedIn: preloadEngine }) : await connect(dev);
+  const { gh, settings } = await connectCloud({ onLoggedIn: preloadEngine });
   const projectDir = projectDirFor(settings.owner, settings.repo, settings.branch);
   if (!(await acquireTabLock(projectDir))) {
     showFatal('이미 다른 탭에서 이 프로젝트를 열었습니다', '같은 프로젝트를 여러 탭에서 동시에 열면 파일이 서로 덮어써집니다. 다른 탭을 닫고 새로고침하세요.');
@@ -359,8 +279,8 @@ async function main() {
   installGodotAI(api);
   registerWebMCP(api, logs);
   const panel = new AIPanel({ root: $('#ai-panel'), api, logs, toast });
-  bindToolbar({ api, sync, panel, cloud });
-  app.mcp = setupMcp({ api, sync, bridge, info: api.info, cloud });
+  bindToolbar({ api, sync, panel });
+  app.mcp = setupMcp({ api, sync, bridge, info: api.info });
 
   sync.start({ autosaveSec: dev.autosaveSec ?? 30, pollSec: dev.pollSec ?? 30, statusSec: dev.statusSec ?? 10 });
   window.addEventListener('beforeunload', (e) => {

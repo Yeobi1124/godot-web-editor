@@ -1,6 +1,6 @@
-// MCP 중계 서버(godot-mcp-relay)와의 연결.
-// 탭이 서버로 WebSocket을 열고, 서버가 보내는 도구 호출을 ProjectAPI로 실행해 결과를 돌려준다.
-// 프로토콜은 docs/MCP.md 3장 참고.
+// Claude(MCP)와의 연결: 같은 주소의 Worker(/live)로 WebSocket을 열고(로그인 쿠키로 인증),
+// Worker의 Hub가 보내는 도구 호출을 ProjectAPI로 실행해 결과를 돌려준다.
+// 메시지: 탭 → hello / result / state / ping,  서버 → welcome / call / pong / reject
 
 import { toMcpContent } from './tool-defs.js';
 
@@ -27,16 +27,12 @@ export class McpLink extends EventTarget {
     document.addEventListener('visibilitychange', pushState);
   }
 
-  /**
-   * url: 서버 주소, token: 페어링 토큰.
-   * path: WebSocket 경로 (중계 서버 '/editor', 클라우드 Worker '/live' — 같은 주소라 로그인 쿠키로 인증)
-   */
-  configure({ url, token, path = '/editor' } = {}) {
+  /** url: 서버 주소(보통 location.origin), path: WebSocket 경로 */
+  configure({ url, path = '/live' } = {}) {
     this.url = url || '';
-    this.token = token || '';
     this.path = path;
     this.stop();
-    if (this.url && this.token) {
+    if (this.url) {
       this.#stopped = false;
       this.#retry = 0;
       this.#connect();
@@ -63,7 +59,7 @@ export class McpLink extends EventTarget {
   #wsUrl() {
     const u = new URL(this.url);
     u.protocol = u.protocol === 'https:' ? 'wss:' : 'ws:';
-    u.pathname = `${u.pathname.replace(/\/$/, '')}${this.path || '/editor'}`;
+    u.pathname = `${u.pathname.replace(/\/$/, '')}${this.path || '/live'}`;
     u.search = '';
     u.hash = '';
     return u.href;
@@ -89,7 +85,6 @@ export class McpLink extends EventTarget {
       this.#send({
         type: 'hello',
         protocol: 1,
-        pairingToken: this.token,
         project: { owner: this.info.owner, repo: this.info.repo, branch: this.info.branch },
         // 서버의 헤드리스 에디터(자동화 브라우저)인지 사람이 쓰는 브라우저인지 (navigator.webdriver는 자동화 시 true)
         app: { version: this.info.appVersion, godot: this.info.godotVersion, kind: navigator.webdriver ? 'headless' : 'browser' },
