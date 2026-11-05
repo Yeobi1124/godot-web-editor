@@ -38,6 +38,29 @@ const engineWrites = new Map();
 const WRITE_WAIT_MS = 90000; // 진행 중인 캐시 쓰기를 기다리는 최대 시간 (멈춘 다운로드를 무한정 기다리지 않게)
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+const MIRROR_HEADER_TIMEOUT_MS = 15000;
+
+/** 조각 하나: sources 순서대로 시도. 응답 헤더가 제때 오지 않거나 실패하면 다음 곳 */
+async function fetchPart(part, sources) {
+  let lastError = null;
+  for (const src of sources) {
+    const url = new URL(part, src);
+    const crossOrigin = url.origin !== self.location.origin;
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), MIRROR_HEADER_TIMEOUT_MS);
+    try {
+      const res = await fetch(url, crossOrigin ? { mode: 'cors', credentials: 'omit', signal: ctrl.signal } : { signal: ctrl.signal });
+      clearTimeout(timer);
+      if (res.ok && res.body) return res;
+      lastError = new Error(`${url.href}: ${res.status}`);
+    } catch (e) {
+      clearTimeout(timer);
+      lastError = e;
+    }
+  }
+  throw new Error(`엔진 조각을 받지 못했습니다: ${part} (${lastError?.message ?? '알 수 없음'})`);
+}
+
 /** 클라우드 빌드면 조각들을 순서대로 받아 하나의 응답으로, 아니면(조각 목록 없음) 원래 요청 그대로 */
 async function fetchEngineWasm(request) {
   const base = new URL('engine/', self.registration.scope);
@@ -49,13 +72,10 @@ async function fetchEngineWasm(request) {
     /* 조각 목록 없음 → 한 파일로 배포된 빌드 */
   }
   if (!manifest?.parts?.length) return fetch(request);
-  // 조각을 한꺼번에 요청해 회선을 다 쓰고, 이어 붙이는 것만 순서대로 한다
-  const responses = manifest.parts.map((part) =>
-    fetch(new URL(part, base)).then((res) => {
-      if (!res.ok || !res.body) throw new Error(`엔진 조각을 받지 못했습니다: ${part} (${res.status})`);
-      return res;
-    }),
-  );
+  // 조각을 한꺼번에 요청해 회선을 다 쓰고, 이어 붙이는 것만 순서대로 한다.
+  // 미러(GitHub Pages 등)가 있으면 먼저 쓰고, 실패하면 이 사이트의 조각을 쓴다
+  const sources = [...(Array.isArray(manifest.mirrors) ? manifest.mirrors : []), base.href];
+  const responses = manifest.parts.map((part) => fetchPart(part, sources));
   responses.forEach((p) => p.catch(() => {})); // 앞 조각에서 실패하면 뒤 조각의 거부는 무시
   let index = 0;
   let reader = null;

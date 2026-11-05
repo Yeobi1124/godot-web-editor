@@ -6,7 +6,8 @@
 
 import { spawn } from 'node:child_process';
 import { createHash, randomBytes } from 'node:crypto';
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { createReadStream, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { createServer } from 'node:http';
 import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -54,6 +55,27 @@ gh.commit(
   'Initial commit',
 );
 await gh.listen(GH_PORT);
+
+// ---------- 엔진 조각 미러 (GitHub Pages 흉내: CORS 허용, 요청 수 기록) ----------
+// E2E_MIRROR=down 이면 닫힌 포트를 미러로 넣어 Worker 조각으로 대체되는지 확인한다
+const MIRROR_PORT = 8092;
+const manifestPath = join(ROOT, 'dist-worker/engine/wasm-manifest.json');
+const originalManifest = readFileSync(manifestPath, 'utf8');
+const engineSha = JSON.parse(originalManifest).sha256;
+const mirrorDown = process.env.E2E_MIRROR === 'down';
+const mirrorHits = [];
+const mirror = createServer((req, res) => {
+  const path = join(ROOT, 'dist-mirror', decodeURIComponent(new URL(req.url, 'http://x').pathname));
+  mirrorHits.push(req.url);
+  if (!path.startsWith(join(ROOT, 'dist-mirror')) || !existsSync(path)) {
+    res.writeHead(404, { 'Access-Control-Allow-Origin': '*' }).end();
+    return;
+  }
+  res.writeHead(200, { 'Content-Type': 'application/wasm', 'Access-Control-Allow-Origin': '*' });
+  createReadStream(path).pipe(res);
+});
+if (!mirrorDown) await new Promise((r) => mirror.listen(MIRROR_PORT, r));
+writeFileSync(manifestPath, JSON.stringify({ ...JSON.parse(originalManifest), mirrors: [`http://localhost:${mirrorDown ? 9 : MIRROR_PORT}/engine/${engineSha}/`] }));
 
 // ---------- 로컬 Worker ----------
 const state = mkdtempSync(join(tmpdir(), 'e2e-cloud-'));
@@ -166,6 +188,9 @@ try {
   log('에디터 준비 완료');
   const viaWorker = (wranglerOut.match(/GET \/godot\.editor\.wasm/g) ?? []).length;
   check('엔진은 서비스 워커가 조각을 직접 받아 이어 붙임 (Worker 이어 붙이기 경로 안 씀)', viaWorker === 0, `Worker 경로 요청 ${viaWorker}회`);
+  const partHits = mirrorHits.filter((u) => /godot\.editor\.\d\.wasm$/.test(u)).length;
+  if (mirrorDown) check('미러가 꺼져 있으면 Worker의 조각으로 대체해서 엔진 로드', partHits === 0, `미러 요청 ${partHits}회`);
+  else check('엔진 조각 4개를 미러(GitHub Pages 흉내)에서 받음', partHits === 4, `미러 요청 ${partHits}회: ${mirrorHits.join(', ')}`);
 
   const secrets = await ai(() => ({ cookie: document.cookie, local: JSON.stringify(localStorage), session: JSON.stringify(sessionStorage) }));
   check('세션 쿠키와 GitHub 토큰이 페이지 JS에 보이지 않음', !/gwe_sid|ghu_|ghr_/.test(JSON.stringify(secrets)), JSON.stringify(secrets).slice(0, 200));
@@ -276,6 +301,8 @@ try {
   wrangler.kill('SIGINT');
   gh.close();
   rmSync(state, { recursive: true, force: true });
+  writeFileSync(manifestPath, originalManifest);
+  mirror.close();
 }
 
 log(failures ? `실패 ${failures}건` : '모두 통과');
