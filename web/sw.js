@@ -1,7 +1,7 @@
 // service worker
 //  - 모든 같은 출처 응답에 COOP/COEP 헤더를 붙인다 (SharedArrayBuffer 사용 조건)
 //  - Godot 엔진 파일(약 100MB)은 버전별로 캐시해서 다음 방문을 빠르게 한다
-//  - 클라우드 버전은 엔진 wasm이 조각(engine/godot.editor.wasm.N)으로 올라가 있다. 조각을 직접 받아 이어 붙인다
+//  - 클라우드 버전은 엔진 wasm이 조각(engine/godot.editor.N.wasm)으로 올라가 있다. 조각을 한꺼번에 받아 순서대로 이어 붙인다
 //    (Worker가 이어 붙여 보내는 /godot.editor.wasm 경로는 서비스 워커가 아직 없을 때만 쓰는 예비 경로)
 //  - 앱 파일(html/js/css)은 항상 네트워크를 먼저 확인한다 (업데이트 즉시 반영)
 //  - 다른 출처 요청(api.github.com 등)과 클라우드 Worker의 동적 경로(/auth, /api, /gh)에는 관여하지 않는다
@@ -49,20 +49,25 @@ async function fetchEngineWasm(request) {
     /* 조각 목록 없음 → 한 파일로 배포된 빌드 */
   }
   if (!manifest?.parts?.length) return fetch(request);
+  // 조각을 한꺼번에 요청해 회선을 다 쓰고, 이어 붙이는 것만 순서대로 한다
+  const responses = manifest.parts.map((part) =>
+    fetch(new URL(part, base)).then((res) => {
+      if (!res.ok || !res.body) throw new Error(`엔진 조각을 받지 못했습니다: ${part} (${res.status})`);
+      return res;
+    }),
+  );
+  responses.forEach((p) => p.catch(() => {})); // 앞 조각에서 실패하면 뒤 조각의 거부는 무시
   let index = 0;
   let reader = null;
   const body = new ReadableStream({
     async pull(controller) {
       for (;;) {
         if (!reader) {
-          if (index >= manifest.parts.length) {
+          if (index >= responses.length) {
             controller.close();
             return;
           }
-          const part = manifest.parts[index++];
-          const res = await fetch(new URL(part, base));
-          if (!res.ok || !res.body) throw new Error(`엔진 조각을 받지 못했습니다: ${part} (${res.status})`);
-          reader = res.body.getReader();
+          reader = (await responses[index++]).body.getReader();
         }
         const { done, value } = await reader.read();
         if (done) {
@@ -75,6 +80,7 @@ async function fetchEngineWasm(request) {
     },
     cancel(reason) {
       reader?.cancel(reason);
+      for (const p of responses.slice(index)) p.then((r) => r.body.cancel(reason)).catch(() => {});
     },
   });
   return new Response(body, {

@@ -21,14 +21,16 @@ cp -r "$DIST/." "$OUT/"
 rm -f "$OUT/godot.editor.wasm" "$OUT/.nojekyll"
 
 WASM="$DIST/godot.editor.wasm"
-split -b "$PART_BYTES" -d -a 1 "$WASM" "$OUT/engine/godot.editor.wasm."
-PARTS="$(cd "$OUT/engine" && ls godot.editor.wasm.* | sort -V | sed 's/.*/"&"/' | paste -sd, -)"
+# 조각 이름은 .wasm으로 끝나게 한다 (godot.editor.0.wasm …): Content-Type이 application/wasm이 되어 Cloudflare가 압축해서 보낸다
+split -b "$PART_BYTES" -d -a 1 "$WASM" "$OUT/engine/part."
+for f in "$OUT"/engine/part.*; do mv "$f" "$OUT/engine/godot.editor.${f##*.}.wasm"; done
+PARTS="$(cd "$OUT/engine" && ls godot.editor.*.wasm | sort -V | sed 's/.*/"&"/' | paste -sd, -)"
 SIZE="$(stat -c %s "$WASM")"
 SHA="$(sha256sum "$WASM" | cut -d' ' -f1)"
 printf '{"size":%s,"sha256":"%s","parts":[%s]}\n' "$SIZE" "$SHA" "$PARTS" > "$OUT/engine/wasm-manifest.json"
 
 # 조각을 다시 이어 붙였을 때 원본과 같은지 확인
-[ "$(cd "$OUT/engine" && cat $(ls godot.editor.wasm.* | sort -V) | sha256sum | cut -d' ' -f1)" = "$SHA" ] || { echo "엔진 조각 검증 실패" >&2; exit 1; }
+[ "$(cd "$OUT/engine" && cat $(ls godot.editor.*.wasm | sort -V) | sha256sum | cut -d' ' -f1)" = "$SHA" ] || { echo "엔진 조각 검증 실패" >&2; exit 1; }
 
 python3 - "$OUT/build-info.json" <<'PY'
 import json, sys
