@@ -7,6 +7,7 @@ Claude 같은 AI가 프로젝트를 읽고 고칠 수 있도록 도구 API도 �
 - 에디터 주소: **https://godotweb.solitary-cloud-8e56.workers.dev** (Cloudflare Worker)
 - 게임 프로젝트: 별도의 GitHub 저장소 (비공개 가능)
 - 로그인: **"GitHub로 로그인"** 한 번. GitHub 토큰은 Worker에만 보관되고 브라우저에는 남지 않습니다.
+- **사용자 매뉴얼: [docs/USER-GUIDE.md](docs/USER-GUIDE.md)** (화면 설명, Claude 연결, 테스트, 문제 해결)
 - 서비스 설정(Cloudflare, GitHub App): [docs/CLOUD-SETUP.md](docs/CLOUD-SETUP.md)
 
 ## 사용법
