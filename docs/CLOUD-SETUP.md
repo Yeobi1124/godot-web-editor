@@ -135,22 +135,33 @@ func test_jump(t):
 | 상황 | 실행 위치 | 걸리는 시간 |
 |---|---|---|
 | 그 프로젝트의 웹 에디터가 열려 있음 | 그 브라우저 안의 Godot | 몇 초 |
-| 열려 있지 않음 (휴대폰 등) | 이 저장소의 GitHub Actions (`godot-runner.yml`) | 1~2분 |
+| 열려 있지 않음 (휴대폰 등) | **비공개 실행기 저장소**의 GitHub Actions | 1~2분 |
 
 - 실행 로직은 `web/addon/web_editor_bridge/runner/`에 있고, 양쪽이 같은 코드를 쓴다.
 - 브리지 애드온과 함께 게임 저장소에 자동으로 설치된다.
 - Actions가 100초 안에 끝나지 않으면 `request_id`를 돌려주고, Claude가 그 id로 다시 호출해 결과를 받는다.
 
 **Actions 경로 설정 (처음 한 번)**
-1. GitHub App 설정 → Permissions → Repository permissions → **Actions: Read and write** → Save. 설치 화면에 뜨는 권한 변경 요청을 **승인**한다.
-2. 앱 설치 대상에 **이 저장소(godot-web-editor)**를 추가한다. 실행기 워크플로가 여기 있다.
-3. 이 저장소 Settings → Secrets and variables → Actions
+
+실행 기록에는 사용자의 저장소 이름, 테스트 이름, 출력, 오류 내용이 남는다. 그래서 공개 저장소가 아닌 **비공개 실행기 저장소**에서 실행한다.
+실제 로직은 이 저장소의 재사용 워크플로(`.github/workflows/godot-runner.yml`)에 있고, 비공개 저장소에는 그것을 부르는 파일 하나만 둔다.
+
+1. GitHub에서 **비공개** 저장소를 만든다. 예: `godot-web-editor-runner`
+2. 그 저장소에 [`runner-template/godot-runner.yml`](../runner-template/godot-runner.yml)을 `.github/workflows/godot-runner.yml`로 넣는다. 파일 이름은 바꾸지 않는다.
+3. GitHub App 설정 → Permissions → Repository permissions → **Actions: Read and write** → Save. 설치 화면에 뜨는 권한 변경 요청을 **승인**한다.
+4. 앱 설치 대상에 **비공개 실행기 저장소**를 추가한다.
+5. **비공개 실행기 저장소**의 Settings → Secrets and variables → Actions
    - Variables: `GH_APP_ID` = 앱 화면의 App ID
    - Secrets: `GH_APP_PRIVATE_KEY` = 앱의 비공개 키(.pem) 파일 내용 전체
-4. 다시 배포한다 (main에 push하거나 "클라우드 Worker" 워크플로를 실행).
+6. **이 저장소(godot-web-editor)**의 Settings → Secrets and variables → Actions → Variables: `RUNNER_REPO` = `소유자/godot-web-editor-runner`
+7. 다시 배포한다 (main에 push하거나 "클라우드 Worker" 워크플로를 실행).
+
+`RUNNER_REPO`가 비어 있으면 Actions 경로는 꺼지고, 에디터를 열어 둔 브라우저에서만 실행된다.
 
 보안 메모
-- Worker가 Actions를 실행할 때 쓰는 토큰은 **이 저장소만, actions 권한만** 가진 1시간짜리 앱 토큰이다.
+- Worker가 Actions를 실행할 때 쓰는 토큰은 **실행기 저장소만, actions 권한만** 가진 1시간짜리 앱 토큰이다.
+- 실행 기록·로그·캐시는 비공개 실행기 저장소에만 남는다. 저장소 주인은 볼 수 있으므로, 다른 사용자에게 이 점을 알린다.
+- 여러 사용자의 실행이 같은 캐시를 쓴다. Godot 바이너리는 사용자 코드가 돌기 전에만 캐시에 저장하고 매번 체크섬을 확인한다. import 캐시는 저장소마다 이름(해시)이 달라 섞이지 않는다.
 - 워크플로가 게임 저장소를 받을 때 쓰는 토큰은 **그 게임 저장소만, contents:read**다.
 - 사용자 GitHub 토큰은 Actions로 넘어가지 않는다.
 - 입력값(저장소, SHA, 필터)은 워크플로에서 형식을 검사한다.

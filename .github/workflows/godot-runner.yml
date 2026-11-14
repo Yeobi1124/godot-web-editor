@@ -1,31 +1,37 @@
-# Godot 실행기: 게임 저장소의 테스트 실행 / 스크립트 검사 (웹 에디터가 열려 있지 않을 때 Worker가 실행)
+# Godot 실행기 (재사용 워크플로): 게임 저장소의 테스트 실행 / 스크립트 검사
+# 웹 에디터가 열려 있지 않을 때 Worker가 **비공개 실행기 저장소**의 호출 워크플로(runner-template/godot-runner.yml)를 실행하고,
+# 그 워크플로가 이것을 부른다. 실행 기록·로그·캐시는 호출한 비공개 저장소에만 남는다 (다른 사용자 정보가 공개 로그에 남지 않도록).
 # 실행 로직은 web/addon/web_editor_bridge/runner/ (브라우저와 같은 코드)
-# 필요한 설정 (docs/CLOUD-SETUP.md)
-#   Variables: GH_APP_ID            GitHub App ID
-#   Secrets:   GH_APP_PRIVATE_KEY   GitHub App 비공개 키 (.pem 내용)
-# GitHub App은 Actions: Read and write 권한이 있고, 이 저장소와 게임 저장소에 설치되어 있어야 한다.
-name: Godot 실행기
-run-name: gwe ${{ inputs.request_id }}
+name: Godot 실행기 (재사용)
 
 on:
-  workflow_dispatch:
+  workflow_call:
     inputs:
       repo:
-        description: '게임 저장소 (소유자/이름)'
+        type: string
         required: true
       sha:
-        description: '커밋 SHA'
+        type: string
         required: true
       mode:
-        description: 'test 또는 check'
-        type: choice
-        options: [test, check]
+        type: string
         default: test
       filter:
-        description: '테스트 파일 이름 필터 (test 모드)'
+        type: string
         default: ''
-      request_id:
-        description: 'Worker가 결과를 찾을 때 쓰는 id'
+      app_id:
+        description: GitHub App ID (게임 저장소 읽기 토큰 발급용)
+        type: string
+        required: true
+      runner_repo:
+        description: 실행기 코드가 있는 저장소 (이 공개 저장소)
+        type: string
+        default: Yeobi1124/godot-web-editor
+      runner_ref:
+        type: string
+        default: main
+    secrets:
+      app_private_key:
         required: true
 
 permissions:
@@ -37,6 +43,7 @@ jobs:
     timeout-minutes: 20
     env:
       GODOT_VERSION: 4.7.2
+      GODOT_SHA256: 8d106cbe6144c2dc7e881d61d2429c1a8a76e6b22ef48bd5e48dcf934953f71e
       IN_REPO: ${{ inputs.repo }}
       IN_SHA: ${{ inputs.sha }}
       IN_MODE: ${{ inputs.mode }}
@@ -45,16 +52,20 @@ jobs:
       - name: 입력 확인
         id: in
         run: |
+          [[ "$IN_MODE" == test || "$IN_MODE" == check ]] || { echo "잘못된 mode: $IN_MODE"; exit 1; }
           [[ "$IN_REPO" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "잘못된 저장소: $IN_REPO"; exit 1; }
           [[ "$IN_SHA" =~ ^[0-9a-f]{40}$ ]] || { echo "잘못된 SHA: $IN_SHA"; exit 1; }
           [[ "$IN_FILTER" =~ ^[A-Za-z0-9_.-]*$ ]] || { echo "필터에는 영문, 숫자, _ . - 만 쓸 수 있습니다"; exit 1; }
           echo "owner=${IN_REPO%%/*}" >> "$GITHUB_OUTPUT"
           echo "name=${IN_REPO##*/}" >> "$GITHUB_OUTPUT"
-          echo "cache=$(echo "$IN_REPO" | tr '/' '_')" >> "$GITHUB_OUTPUT"
+          # 저장소마다 겹치지 않는 캐시 이름 (이름을 그대로 쓰면 a/b 와 a/b-c 가 접두어로 겹친다)
+          echo "cache=$(printf '%s' "${IN_REPO,,}" | sha256sum | cut -c1-32)" >> "$GITHUB_OUTPUT"
 
       - name: 실행기 코드
         uses: actions/checkout@v4
         with:
+          repository: ${{ inputs.runner_repo }}
+          ref: ${{ inputs.runner_ref }}
           path: self
           sparse-checkout: web/addon/web_editor_bridge/runner
           persist-credentials: false
@@ -63,8 +74,8 @@ jobs:
         id: token
         uses: actions/create-github-app-token@v2
         with:
-          app-id: ${{ vars.GH_APP_ID }}
-          private-key: ${{ secrets.GH_APP_PRIVATE_KEY }}
+          app-id: ${{ inputs.app_id }}
+          private-key: ${{ secrets.app_private_key }}
           owner: ${{ steps.in.outputs.owner }}
           repositories: ${{ steps.in.outputs.name }}
           permission-contents: read
@@ -78,19 +89,32 @@ jobs:
           path: game
           persist-credentials: false
 
-      - name: Godot 캐시
+      # Godot 바이너리 캐시는 모든 사용자의 실행이 함께 쓴다.
+      # 사용자 코드(테스트)가 돌기 전에만 저장하고, 복원할 때마다 체크섬을 확인한다 (바뀐 바이너리가 다른 사용자에게 퍼지지 않도록)
+      - name: Godot 캐시 복원
         id: godot-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: ~/godot
-          key: godot-${{ env.GODOT_VERSION }}-linux
+          key: godot-${{ env.GODOT_VERSION }}-linux-verified
 
-      - name: Godot 받기
-        if: steps.godot-cache.outputs.cache-hit != 'true'
+      - name: Godot 받기 / 확인
+        id: godot
         run: |
           mkdir -p ~/godot && cd ~/godot
-          curl -fsSL -o g.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/Godot_v${GODOT_VERSION}-stable_linux.x86_64.zip"
+          bin="Godot_v${GODOT_VERSION}-stable_linux.x86_64"
+          if echo "$GODOT_SHA256  $bin" | sha256sum -c --quiet - 2>/dev/null; then exit 0; fi
+          rm -rf ~/godot/* && curl -fsSL --retry 3 -o g.zip "https://github.com/godotengine/godot/releases/download/${GODOT_VERSION}-stable/${bin}.zip"
           unzip -q g.zip && rm g.zip
+          echo "$GODOT_SHA256  $bin" | sha256sum -c --quiet -
+          echo "downloaded=true" >> "$GITHUB_OUTPUT"
+
+      - name: Godot 캐시 저장
+        if: steps.godot.outputs.downloaded == 'true' && steps.godot-cache.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: ~/godot
+          key: godot-${{ env.GODOT_VERSION }}-linux-verified
 
       - name: 리소스 import 캐시 (.godot)
         uses: actions/cache@v4

@@ -1,7 +1,7 @@
 # 클라우드 버전(Cloudflare Worker): 테스트 + main 배포
 # 배포에 필요한 설정 (docs/CLOUD-SETUP.md)
 #   Secrets:   CLOUDFLARE_API_TOKEN, CLOUDFLARE_ACCOUNT_ID, GH_APP_CLIENT_SECRET, GH_APP_PRIVATE_KEY(테스트 실행기)
-#   Variables: GH_APP_CLIENT_ID, GH_APP_SLUG, GH_APP_ID(테스트 실행기)
+#   Variables: GH_APP_CLIENT_ID, GH_APP_SLUG, GH_APP_ID(테스트 실행기), RUNNER_REPO(비공개 실행기 저장소, 예: 소유자/godot-web-editor-runner)
 # (GitHub는 GITHUB_로 시작하는 이름을 허용하지 않아서 GH_APP_* 로 둔다)
 name: 클라우드 Worker
 
@@ -117,7 +117,7 @@ jobs:
             --var "GITHUB_CLIENT_ID:${{ vars.GH_APP_CLIENT_ID }}" \
             --var "GITHUB_APP_SLUG:${{ vars.GH_APP_SLUG }}" \
             --var "GITHUB_APP_ID:${{ vars.GH_APP_ID }}" \
-            --var "RUNNER_REPO:${{ github.repository }}"
+            --var "RUNNER_REPO:${{ vars.RUNNER_REPO }}"
       - name: 비밀값 등록 (GitHub App client secret)
         if: steps.cfg.outputs.skip != 'true' && env.GH_APP_CLIENT_SECRET != ''
         working-directory: worker

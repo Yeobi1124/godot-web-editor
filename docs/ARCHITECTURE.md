@@ -9,7 +9,7 @@
     mcp-link.js ──/live(WebSocket)──▶     Hub(사용자별 Durable Object) ◀── Claude의 도구 호출
     sw.js: 엔진 조각(GitHub Pages 미러 → Worker 정적 파일)을 이어 붙여 캐시
   project-api.js (도구 레지스트리): window.godotAI, WebMCP, AI 패널, Claude(MCP)가 공유
-탭이 없을 때: Worker가 GitHub에 바로 커밋, run_tests/check_scripts는 GitHub Actions(godot-runner.yml)
+탭이 없을 때: Worker가 GitHub에 바로 커밋, run_tests/check_scripts는 비공개 실행기 저장소의 GitHub Actions(재사용 워크플로 godot-runner.yml)
 ```
 
 ## 파일

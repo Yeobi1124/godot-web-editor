@@ -1,11 +1,15 @@
-// GitHub Actions로 테스트 실행 / 스크립트 검사 (.github/workflows/godot-runner.yml)
+// GitHub Actions로 테스트 실행 / 스크립트 검사. RUNNER_REPO(비공개 실행기 저장소)의 godot-runner.yml을 실행한다
+// (그 파일은 runner-template/godot-runner.yml, 실제 로직은 이 저장소의 재사용 워크플로 .github/workflows/godot-runner.yml)
 // 웹 에디터가 열려 있지 않을 때 쓴다. 실행 기록은 run-name "gwe <request_id>"로 찾는다.
 import { appConfigured, installationToken } from './github-app.js';
 import { githubFetch, randomToken } from './http.js';
 
 const WORKFLOW = 'godot-runner.yml';
 const WAIT_MS = 100000; // MCP 호출 한 번에 기다리는 최대 시간
-const POLL_MS = 3000;
+// 확인 간격: 처음 30초는 3초마다, 그 뒤는 8초마다 (Worker 요청 하나의 외부 호출 한도 50회 안에 넉넉히 들도록)
+const POLL_FAST_MS = 3000;
+const POLL_SLOW_MS = 8000;
+const FAST_FOR_MS = 30000;
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 export const runnerConfigured = (env) => appConfigured(env) && !!env.RUNNER_REPO;
@@ -47,15 +51,17 @@ async function readResult(env, token, run) {
 
 /** request_id의 실행을 기다린다. 시간 안에 끝나지 않으면 status: running */
 const waitMs = (env) => Number(env.RUNNER_WAIT_MS) || WAIT_MS;
-const pollMs = (env) => Number(env.RUNNER_POLL_MS) || POLL_MS;
+const pollMs = (env, elapsed) => Number(env.RUNNER_POLL_MS) || (elapsed < FAST_FOR_MS ? POLL_FAST_MS : POLL_SLOW_MS);
 
 export async function waitRun(env, requestId, { token = null, deadline = Date.now() + waitMs(env) } = {}) {
   const tok = token ?? (await installationToken(env, env.RUNNER_REPO, { actions: 'read' }));
+  const started = Date.now();
   let run = null;
   for (;;) {
+    const interval = pollMs(env, Date.now() - started);
     run = await findRun(env, tok, requestId);
     if (run?.status === 'completed') break;
-    if (Date.now() + pollMs(env) > deadline) {
+    if (Date.now() + interval > deadline) {
       return {
         status: 'running',
         request_id: requestId,
@@ -63,7 +69,7 @@ export async function waitRun(env, requestId, { token = null, deadline = Date.no
         note: run ? 'GitHub Actions에서 실행 중입니다. 잠시 뒤 같은 도구를 이 request_id로 다시 호출하세요.' : '실행을 기다리는 중입니다(대기열). 잠시 뒤 같은 도구를 이 request_id로 다시 호출하세요.',
       };
     }
-    await sleep(pollMs(env));
+    await sleep(interval);
   }
   const result = await readResult(env, tok, run);
   if (!result) return { ok: false, status: 'completed', request_id: requestId, run_url: run.html_url, error: `실행 결과를 찾지 못했습니다 (결론: ${run.conclusion}). 실행 기록을 확인하세요.` };
